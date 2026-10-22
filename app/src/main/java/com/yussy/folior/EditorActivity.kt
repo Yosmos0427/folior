@@ -798,17 +798,18 @@ class EditorActivity : AppCompatActivity() {
                 View.VISIBLE else View.GONE
         if (canvas.selected != null) {
             val it = canvas.selected!!
-            // 裁剪按钮只对照片有效；编辑对文字/色块有效 —— 动态调整第一个按钮文案
+            // 行1 构成：删除 / 装裱 / 尺寸 / 编辑 —— 按元素类型控制可见性
             (selectionBar.getChildAt(0) as LinearLayout).let { row ->
                 val isPhoto = it.type == Item.TYPE_PHOTO
                 val isExh = project.type == Project.TYPE_EXHIBITION
-                (row.getChildAt(1) as TextView).visibility = if (isPhoto) View.VISIBLE else View.GONE
-                (row.getChildAt(2) as TextView).visibility =
+                (row.getChildAt(1) as TextView).visibility =   // 装裱：照片与文字
                     if (isPhoto || it.type == Item.TYPE_TEXT) View.VISIBLE else View.GONE
-                (row.getChildAt(3) as TextView).visibility = if (isPhoto && isExh) View.VISIBLE else View.GONE
-                (row.getChildAt(4) as TextView).visibility = if (isPhoto) View.GONE else View.VISIBLE
+                (row.getChildAt(2) as TextView).visibility =   // 尺寸：展览照片
+                    if (isPhoto && isExh) View.VISIBLE else View.GONE
+                (row.getChildAt(3) as TextView).visibility =   // 编辑：非照片
+                    if (isPhoto) View.GONE else View.VISIBLE
             }
-            // 第二行（复制/置顶/下移/转90°/跨页）全部常显，无需处理
+            // 行2（复制/置顶/下移/转90°/跨页）全部常显，无需处理
         }
     }
 
