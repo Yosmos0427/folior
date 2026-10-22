@@ -297,9 +297,16 @@ class PageCanvas @JvmOverloads constructor(
             val rp = Paint(Paint.ANTI_ALIAS_FLAG)
             rp.color = 0x736B6B66.toInt()
             rp.strokeWidth = 1f
+            // 长度刻度文字：左对齐（贴在刻度右侧）
             val tp = Paint(Paint.ANTI_ALIAS_FLAG)
             tp.color = 0xFF8A8A84.toInt()
             tp.textSize = 9f * dd
+            // 高度刻度文字：右对齐（贴在刻度左侧，避免压到墙面）
+            val tpV = Paint(Paint.ANTI_ALIAS_FLAG)
+            tpV.color = 0xFF8A8A84.toInt()
+            tpV.textSize = 9f * dd
+            tpV.textAlign = Paint.Align.RIGHT
+
             for (sl in slots) {
                 val pg = p.pages.getOrNull(sl.index) ?: continue
                 val ww = pg.widthMm(p); val wh = pg.heightMm(p)
@@ -307,25 +314,33 @@ class PageCanvas @JvmOverloads constructor(
                 val pymm = sl.rect.height() / wh
                 val stepX = if (ww > 8000) 500f else 100f
                 val stepY = if (wh > 8000) 500f else 100f
+
+                // 长度：沿底边，原点在左下角，向右递增
                 var mm = 0f
                 while (mm <= ww + 0.5f) {
                     val x = sl.rect.left + mm * pxmm
                     val major = (mm.toInt() % 1000) == 0
                     val len = if (major) 9f * dd else if ((mm.toInt() % 500) == 0) 6f * dd else 3f * dd
-                    canvas.drawLine(x, sl.rect.top - len, x, sl.rect.top, rp)
-                    if (major && mm > 0) canvas.drawText("${(mm / 1000).toInt()}", x + 3f, sl.rect.top - 11f * dd, tp)
+                    canvas.drawLine(x, sl.rect.bottom, x, sl.rect.bottom + len, rp)
+                    if (major && mm > 0) canvas.drawText(
+                        "${(mm / 1000).toInt()}", x + 3f, sl.rect.bottom + 10f * dd, tp)
                     mm += stepX
                 }
+
+                // 高度：沿左边，原点在左下角，向上递增
                 var mv = 0f
                 while (mv <= wh + 0.5f) {
-                    val y = sl.rect.top + mv * pymm
+                    val y = sl.rect.bottom - mv * pymm
                     val major = (mv.toInt() % 1000) == 0
                     val len = if (major) 9f * dd else if ((mv.toInt() % 500) == 0) 6f * dd else 3f * dd
                     canvas.drawLine(sl.rect.left - len, y, sl.rect.left, y, rp)
-                    if (major && mv > 0) canvas.drawText("${(mv / 1000).toInt()}", sl.rect.left - 16f * dd, y - 3f, tp)
+                    if (major && mv > 0) canvas.drawText(
+                        "${(mv / 1000).toInt()}", sl.rect.left - 4f * dd, y + 3f * dd, tpV)
                     mv += stepY
                 }
-                canvas.drawText("m", sl.rect.left - 16f * dd, sl.rect.top - 11f * dd, tp)
+
+                // 单位：标注在原点（左下角）
+                canvas.drawText("m", sl.rect.left - 4f * dd, sl.rect.bottom + 10f * dd, tpV)
             }
         }
 
