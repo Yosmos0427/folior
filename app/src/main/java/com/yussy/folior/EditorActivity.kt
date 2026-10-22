@@ -413,6 +413,12 @@ class EditorActivity : AppCompatActivity() {
         spread = land && project.type == Project.TYPE_BOOK
         canvas.spreadMode = spread
 
+        // 装裱面板：横屏限制为屏幕高的 42%（内部可滚动），竖屏自适应内容高度
+        framingPanel.layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            if (land) (resources.displayMetrics.heightPixels * 0.42f).toInt()
+            else ViewGroup.LayoutParams.WRAP_CONTENT)
+
         if (land) {
             bottomStripWrap.visibility = View.GONE
             sideStripWrap.visibility = View.VISIBLE

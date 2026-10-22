@@ -98,6 +98,47 @@ class PageCanvas @JvmOverloads constructor(
     private var emptyDownY = 0f
     private var hasItemAtDown = false
 
+    // ---------------- 工作区视图变换（双指缩放/平移，查看局部细节） ----------------
+
+    private var viewScale = 1f
+    private var viewX = 0f
+    private var viewY = 0f
+    private var zooming = false
+    private var zoomInitDist = 0f
+    private var zoomInitScale = 1f
+    private var zoomInitMidX = 0f
+    private var zoomInitMidY = 0f
+    private var zoomInitViewX = 0f
+    private var zoomInitViewY = 0f
+
+    /** 复位视图（=1 倍、居中）。 */
+    fun resetView() {
+        if (viewScale == 1f && viewX == 0f && viewY == 0f) return
+        viewScale = 1f; viewX = 0f; viewY = 0f
+        invalidate()
+    }
+
+    /** 把事件坐标从视图系换算到内容系（返回原事件或变换副本）。 */
+    private fun contentEvent(ev: MotionEvent): MotionEvent {
+        if (viewScale == 1f && viewX == 0f && viewY == 0f) return ev
+        val m = Matrix()
+        m.setScale(1f / viewScale, 1f / viewScale)
+        m.postTranslate(-viewX / viewScale, -viewY / viewScale)
+        return MotionEvent.obtain(ev).apply { transform(m) }
+    }
+
+    /** 平移边界：内容始终保持覆盖视口大部分区域。 */
+    private fun clampView() {
+        if (viewScale <= 1f) { viewX = 0f; viewY = 0f; return }
+        val slackX = width * 0.15f
+        val slackY = height * 0.15f
+        viewX = viewX.coerceIn(-(width * (viewScale - 1f)) - slackX, slackX)
+        viewY = viewY.coerceIn(-(height * (viewScale - 1f)) - slackY, slackY)
+    }
+
+    private fun midX(ev: MotionEvent) = (ev.getX(0) + ev.getX(1)) / 2f
+    private fun midY(ev: MotionEvent) = (ev.getY(0) + ev.getY(1)) / 2f
+
     // ---------------- 绘制模式（S Pen / 手指） ----------------
 
     class DrawBrush {
@@ -145,7 +186,8 @@ class PageCanvas @JvmOverloads constructor(
 
         override fun onDoubleTap(e: MotionEvent): Boolean {
             if (cropItem != null) return true
-            val it = hitItem(e.x, e.y) ?: return false
+            val it = hitItem(e.x, e.y)
+            if (it == null) { resetView(); return true }   // 双击空白：复位缩放
             if (it.type == Item.TYPE_PHOTO && it.imgId != null) onOpenCrop?.invoke(it)
             if (it.type == Item.TYPE_TEXT) onEditText?.invoke(it)
             return true
@@ -203,6 +245,7 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     fun enterCrop(item: Item) {
+        resetView()   // 裁切在 1 倍视图下进行
         cropItem = item
         cropRect.setEmpty()
         cropBmp = item.imgId?.let { com.yussy.folior.store.Store.decodeFull(context, it, 2048) }
@@ -222,6 +265,7 @@ class PageCanvas @JvmOverloads constructor(
     /** 重新计算页位（尺寸/方向/跨页模式变化时调用） */
     fun invalidateLayout() {
         cropRect.setEmpty()
+        resetView()   // 方向/模式变化时复位缩放
         layoutSlots()
         invalidate()
     }
@@ -280,6 +324,10 @@ class PageCanvas @JvmOverloads constructor(
         val p = project ?: return
         if (slots.isEmpty()) layoutSlots()
         canvas.drawColor(0xFFF2F2EE.toInt())
+        // 工作区视图变换：缩放/平移下查看书页与墙体的局部细节
+        canvas.save()
+        canvas.translate(viewX, viewY)
+        canvas.scale(viewScale, viewScale)
 
         // 页面底色 + 投影
         val shadow = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -340,7 +388,7 @@ class PageCanvas @JvmOverloads constructor(
             }
         }
 
-        if (cropItem != null) { drawCropMode(canvas); return }
+        if (cropItem != null) { canvas.restore(); drawCropMode(canvas); return }
 
         // 展览：工作区边缘实际尺寸标尺（单位：米）
         if (p.type == Project.TYPE_EXHIBITION && slots.isNotEmpty()) {
@@ -424,6 +472,17 @@ class PageCanvas @JvmOverloads constructor(
             }
         }
         if (sel != null) drawSelection(canvas, sel)
+        canvas.restore()
+
+        // 缩放指示（视图系，不随内容变换）
+        if (viewScale > 1.01f) {
+            val tp = Paint(Paint.ANTI_ALIAS_FLAG)
+            tp.color = 0x996B6B66.toInt()
+            tp.textSize = 10f * resources.displayMetrics.density
+            tp.textAlign = Paint.Align.CENTER
+            canvas.drawText("×${"%.1f".format(viewScale)} · 双击空白复位",
+                width / 2f, height - 8f * resources.displayMetrics.density, tp)
+        }
     }
 
     private fun drawSelection(canvas: Canvas, it: Item) {
@@ -500,12 +559,57 @@ class PageCanvas @JvmOverloads constructor(
     // ---------------- 触摸 ----------------
 
     @SuppressLint("ClickableViewAccessibility")
-    override fun onTouchEvent(ev: MotionEvent): Boolean =
-        when {
-            cropItem != null -> cropTouch(ev)
-            drawMode -> drawTouch(ev)
-            else -> editTouch(ev)
+    override fun onTouchEvent(ev: MotionEvent): Boolean {
+        if (cropItem != null) return cropTouch(ev)
+
+        // 工作区双指缩放：未选中、非绘制模式时用【原始视图坐标】直接处理。
+        // 不能走 contentEvent（内容坐标）—— 其换算分母是正在变化的 viewScale，
+        // 会形成反馈回路导致画面抽搐。
+        if (!drawMode) {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    if (ev.pointerCount == 2 && selected == null && !reordering && !zooming) {
+                        zooming = true
+                        zoomInitDist = dist(ev).coerceAtLeast(1f)
+                        zoomInitScale = viewScale
+                        zoomInitMidX = midX(ev); zoomInitMidY = midY(ev)
+                        zoomInitViewX = viewX; zoomInitViewY = viewY
+                        return true
+                    }
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (zooming && ev.pointerCount >= 2) {
+                        // 锚点缩放：双指中点对应的内容位置在变换前后保持不动
+                        val s = (zoomInitScale * dist(ev) / zoomInitDist).coerceIn(1f, 8f)
+                        val cX = (zoomInitMidX - zoomInitViewX) / zoomInitScale
+                        val cY = (zoomInitMidY - zoomInitViewY) / zoomInitScale
+                        viewScale = s
+                        viewX = midX(ev) - cX * s
+                        viewY = midY(ev) - cY * s
+                        clampView()
+                        invalidate()
+                        return true
+                    }
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    if (zooming && ev.pointerCount - 1 < 2) { zooming = false; return true }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (zooming) { zooming = false; return true }
+                }
+            }
         }
+
+        val rawX = ev.rawX
+        val rawY = ev.rawY
+        val ce = contentEvent(ev)
+        val r = when {
+            drawMode -> drawTouch(ce)
+            else -> editTouch(ce, rawX, rawY)
+        }
+        if (ce !== ev) ce.recycle()
+        return r
+    }
 
     // ---------------- 绘制触摸 ----------------
 
@@ -742,7 +846,7 @@ class PageCanvas @JvmOverloads constructor(
         it.cropCx = cropTempCx; it.cropCy = cropTempCy
     }
 
-    private fun editTouch(ev: MotionEvent): Boolean {
+    private fun editTouch(ev: MotionEvent, rawX: Float, rawY: Float): Boolean {
         gesture.onTouchEvent(ev)
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -776,7 +880,7 @@ class PageCanvas @JvmOverloads constructor(
                 if (resizing) { handleResizeMove(ev); return true }
                 if (reordering) {
                     handleReorderMove(ev)
-                    updateDropTarget(ev)
+                    updateDropTarget(rawX, rawY)
                     lastTouch.set(ev.x, ev.y); return true
                 }
                 if (multiActive && ev.pointerCount >= 2 && selected != null) {
@@ -803,7 +907,7 @@ class PageCanvas @JvmOverloads constructor(
                     applySnap(it)
                     invalidate()
                 }
-                if (dragging) updateDropTarget(ev)
+                if (dragging) updateDropTarget(rawX, rawY)
                 lastTouch.set(ev.x, ev.y)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -864,12 +968,12 @@ class PageCanvas @JvmOverloads constructor(
     private fun angle(ev: MotionEvent): Float =
         atan2((ev.getY(1) - ev.getY(0)).toDouble(), (ev.getX(1) - ev.getX(0)).toDouble()).toFloat()
 
-    private fun updateDropTarget(ev: MotionEvent) {
+    private fun updateDropTarget(rawX: Float, rawY: Float) {
         val it0 = selected
         val ownerIdx = it0?.let { item ->
             pageOf(item)?.let { pg -> project?.pages?.indexOfFirst { it === pg } }
         } ?: -1
-        val t = onDragTargetAt?.invoke(ev.rawX, ev.rawY) ?: -1
+        val t = onDragTargetAt?.invoke(rawX, rawY) ?: -1
         dropTargetIdx = if (t >= 0 && t != ownerIdx) t else -1
         onStripHighlight?.invoke(dropTargetIdx)
     }
@@ -969,9 +1073,9 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     /**
-     * 拖拽右下角手柄调节大小（中心保持不动）：
-     * 横排文字 → 调宽、高度按内容自适应；竖排文字 → 调高、宽度按列数自适应；
-     * 其余元素 → 自由缩放。
+     * 拖拽右下角手柄调节大小：宽高【各自独立】随手指任意缩放（不锁比例），
+     * 文字、照片、色块、笔画统一行为；中心保持不动；
+     * 墙上的照片实际宽度跟随宽度轴缩放。
      */
     private fun handleResizeMove(ev: MotionEvent) {
         val it = selected ?: return
@@ -984,24 +1088,12 @@ class PageCanvas @JvmOverloads constructor(
         val dx = ev.x - cx; val dy = ev.y - cy
         val lx = abs(dx * cos(rad) - dy * sin(rad)).toFloat()
         val ly = abs(dx * sin(rad) + dy * cos(rad)).toFloat()
-        when {
-            it.type == Item.TYPE_TEXT && !it.vertical -> {
-                val wPx = (lx * 2f).coerceAtLeast(16f)
-                it.w = (wPx / slot.rect.width()).coerceIn(0.03f, 8f)
-                it.h = (PageRenderer.textLayoutHeightPx(it, wPx, slot.rect.height()) /
-                    slot.rect.height()).coerceIn(0.02f, 8f)
-            }
-            it.type == Item.TYPE_TEXT && it.vertical -> {
-                val hPx = (ly * 2f).coerceAtLeast(16f)
-                it.h = (hPx / slot.rect.height()).coerceIn(0.03f, 8f)
-                it.w = (PageRenderer.verticalTextWidthPx(it, hPx, slot.rect.height()) /
-                    slot.rect.width()).coerceIn(0.02f, 8f)
-            }
-            else -> {
-                it.w = (lx * 2f / slot.rect.width()).coerceIn(0.02f, 8f)
-                it.h = (ly * 2f / slot.rect.height()).coerceIn(0.02f, 8f)
-            }
-        }
+        val oldW = it.w
+        it.w = (lx * 2f / slot.rect.width()).coerceIn(0.02f, 8f)
+        it.h = (ly * 2f / slot.rect.height()).coerceIn(0.02f, 8f)
+        // 墙上照片：实际打印宽度跟随宽度轴
+        if (it.printMm != null && oldW > 0f)
+            it.printMm = it.printMm!! * (it.w / oldW)
         // 中心保持
         it.x = cxN - it.w / 2f
         it.y = cyN - it.h / 2f
