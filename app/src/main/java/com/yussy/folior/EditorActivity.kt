@@ -65,6 +65,12 @@ class EditorActivity : AppCompatActivity() {
     companion object {
         const val REQ_PDF = 202
         const val REQ_BUNDLE = 203
+        /** 展览常见展厅尺寸预设（米制） */
+        val WALL_PRESETS = listOf(
+            Triple("3×2m", 3000f, 2000f),
+            Triple("3×3m", 3000f, 3000f),
+            Triple("4×3m", 4000f, 3000f),
+            Triple("6×3m", 6000f, 3000f))
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -245,13 +251,6 @@ class EditorActivity : AppCompatActivity() {
             gravity = Gravity.CENTER
             visibility = View.GONE
             setPadding(dp(8f), dp(4f), dp(8f), dp(4f))
-        }
-        fun drawBtnStyle(v: TextView, active: Boolean) {
-            v.setTextColor(if (active) 0xFFFAFAF7.toInt() else 0xFF1A1A18.toInt())
-            v.background = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = dp(8f).toFloat()
-                setColor(if (active) 0xFF1A1A18.toInt() else 0x00000000)
-            }
         }
         val brushDefs = arrayOf(
             Triple("细笔", 0.005f, 1f),
@@ -576,12 +575,7 @@ class EditorActivity : AppCompatActivity() {
         val isExh = project.type == Project.TYPE_EXHIBITION
         if (isExh) {
             showWall(this, "新建墙体",
-                project.pageWmm, project.pageHmm,
-                presets = listOf(
-                    Triple("3×2m", 3000f, 2000f),
-                    Triple("3×3m", 3000f, 3000f),
-                    Triple("4×3m", 4000f, 3000f),
-                    Triple("6×3m", 6000f, 3000f))) { w, h ->
+                project.pageWmm, project.pageHmm, presets = WALL_PRESETS) { w, h ->
                 project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h, bg = page().bg))
                 pageIndex += 1
                 refreshAll()
@@ -598,32 +592,21 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
-    /** 展览：修改当前墙尺寸（米制）。 */
-    private fun wallSettings() {
+    /** 修改当前页/墙尺寸：展览用米制墙体对话框（含展厅预设），摄影书用毫米对话框。 */
+    private fun resizeCurrentPage() {
         val pg = page()
-        showWall(this, "墙体尺寸", pg.widthMm(project), pg.heightMm(project),
-            presets = listOf(
-                Triple("3×2m", 3000f, 2000f),
-                Triple("3×3m", 3000f, 3000f),
-                Triple("4×3m", 4000f, 3000f),
-                Triple("6×3m", 6000f, 3000f))) { w, h ->
+        val apply: (Float, Float) -> Unit = { w, h ->
             pg.wmm = w; pg.hmm = h
             canvas.invalidateLayout()
             strip.refresh()
             scheduleSave()
         }
-    }
-
-    /** 修改当前页尺寸（仅摄影书）。 */
-    private fun pageSettings() {
-        val pg = page()
-        PageSizeDialog.show(this, "页面尺寸",
-            pg.widthMm(project), pg.heightMm(project)) { w, h ->
-            pg.wmm = w; pg.hmm = h
-            canvas.invalidateLayout()
-            strip.refresh()
-            scheduleSave()
-        }
+        if (project.type == Project.TYPE_EXHIBITION)
+            showWall(this, "墙体尺寸", pg.widthMm(project), pg.heightMm(project),
+                presets = WALL_PRESETS) { w, h -> apply(w, h) }
+        else
+            PageSizeDialog.show(this, "页面尺寸",
+                pg.widthMm(project), pg.heightMm(project)) { w, h -> apply(w, h) }
     }
 
     /** 本次导入中超出墙面的提示（导入结束后统一展示） */
@@ -876,10 +859,9 @@ class EditorActivity : AppCompatActivity() {
     private fun showMenu() {
         val actions = mutableListOf<Pair<String, () -> Unit>>(
             "项目设置" to { projectSettings() })
-        if (project.type == Project.TYPE_EXHIBITION)
-            actions.add("墙体设置" to { wallSettings() })
-        else
-            actions.add("页面设置" to { pageSettings() })
+        actions.add(if (project.type == Project.TYPE_EXHIBITION)
+            "墙体设置" to { resizeCurrentPage() }
+        else "页面设置" to { resizeCurrentPage() })
         actions.add("导出 PDF" to { exportPdf() })
         actions.add("导出工程文件 (.folio)" to { exportBundle() })
         AlertDialog.Builder(this)
