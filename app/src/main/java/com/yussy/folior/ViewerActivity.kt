@@ -33,6 +33,8 @@ class ViewerActivity : AppCompatActivity() {
     private lateinit var label: TextView
     private lateinit var viewer: View
     private lateinit var scrubber: Scrubber
+    /** 拖动条拖动中：低清快速渲染（照片小尺寸解码）；抬手后高清定稿一次 */
+    private var fastPreview = false
 
     private val dark = 0xFF14140F.toInt()
 
@@ -74,7 +76,7 @@ class ViewerActivity : AppCompatActivity() {
 
             override fun onDraw(c: Canvas) {
                 c.drawColor(dark)
-                if (isSpreadMode()) drawSpread(c) else drawSingle(c)
+                if (isSpreadMode()) drawSpread(c, !fastPreview) else drawSingle(c, !fastPreview)
             }
         }
         viewer.layoutParams = FrameLayout.LayoutParams(
@@ -103,13 +105,18 @@ class ViewerActivity : AppCompatActivity() {
 
         // 底部页面拖动条
         scrubber = Scrubber(this).apply {
-            onSeek = { frac ->
+            onSeek = { frac, dragging ->
                 val n = project.pages.size
                 if (n > 1) {
                     val target = (frac * (n - 1)).toInt().coerceIn(0, n - 1)
                     if (target != pageIndex) {
                         pageIndex = target
+                        fastPreview = dragging
                         updateLabel()
+                        viewer.invalidate()   // 拖动中低清渲染，抬手后下一帧即高清
+                    } else if (!dragging) {
+                        // 页码未变但抬手了：仍做一次高清定稿
+                        fastPreview = false
                         viewer.invalidate()
                     }
                 }
@@ -128,7 +135,7 @@ class ViewerActivity : AppCompatActivity() {
 
     /** 简易可拖动条：细轨道 + 圆形滑块，拖动即时跳页。 */
     private class Scrubber(ctx: android.content.Context) : View(ctx) {
-        var onSeek: ((Float) -> Unit)? = null
+        var onSeek: ((Float, Boolean) -> Unit)? = null   // (frac, dragging)
         var frac = 0f          // 0..1
 
         override fun onDraw(c: Canvas) {
@@ -152,16 +159,20 @@ class ViewerActivity : AppCompatActivity() {
         override fun onTouchEvent(ev: MotionEvent): Boolean {
             val d = resources.displayMetrics.density
             val pad = 24f * d
+            val w = width - pad * 2f
             when (ev.action) {
                 MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                    val w = width - pad * 2f
                     frac = ((ev.x - pad) / w).coerceIn(0f, 1f)
-                    onSeek?.invoke(frac)
+                    onSeek?.invoke(frac, true)      // 拖动中：低清预览
+                    invalidate()
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    onSeek?.invoke(frac, false)     // 抬手：高清定稿
                     invalidate()
                     return true
                 }
             }
-            parent.requestDisallowInterceptTouchEvent(false)
             return true
         }
     }
@@ -231,7 +242,7 @@ class ViewerActivity : AppCompatActivity() {
 
     // ---------------- 绘制 ----------------
 
-    private fun drawSingle(c: Canvas) {
+    private fun drawSingle(c: Canvas, hq: Boolean) {
         val page = project.pages.getOrNull(pageIndex) ?: return
         val vw = viewer.width.toFloat(); val vh = viewer.height.toFloat()
         val aspect = page.widthMm(project) / page.heightMm(project)
@@ -241,10 +252,10 @@ class ViewerActivity : AppCompatActivity() {
         val l = (vw - pw) / 2f
         val t = (vh - ph) / 2f - 8f
         drawShadow(c, RectF(l, t, l + pw, t + ph))
-        PageRenderer.drawPage(this, project, page, c, l, t, pw, ph, highQuality = true)
+        PageRenderer.drawPage(this, project, page, c, l, t, pw, ph, highQuality = hq)
     }
 
-    private fun drawSpread(c: Canvas) {
+    private fun drawSpread(c: Canvas, hq: Boolean) {
         val (li, ri) = currentSpread()
         val vw = viewer.width.toFloat(); val vh = viewer.height.toFloat()
         val d = resources.displayMetrics.density
@@ -293,12 +304,12 @@ class ViewerActivity : AppCompatActivity() {
         c.clipRect(book)
         li.takeIf { it >= 0 }?.let { i ->
             project.pages.getOrNull(i)?.let {
-                PageRenderer.drawItems(this, project, it, c, leftRect!!, highQuality = true)
+                PageRenderer.drawItems(this, project, it, c, leftRect!!, highQuality = hq)
             }
         }
         ri.takeIf { it >= 0 }?.let { i ->
             project.pages.getOrNull(i)?.let {
-                PageRenderer.drawItems(this, project, it, c, rightRect!!, highQuality = true)
+                PageRenderer.drawItems(this, project, it, c, rightRect!!, highQuality = hq)
             }
         }
         c.restore()
