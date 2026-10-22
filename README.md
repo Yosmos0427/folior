@@ -29,6 +29,15 @@ tools/rollback.sh v1.6.1
 
 以独立 worktree 检出该 tag 并编译，不污染当前分支。
 
+## 配置远端（需要时）
+
+```bash
+git remote add origin https://github.com/<账号>/<仓库>.git
+git push -u origin master --tags
+```
+
+推送凭证建议使用 Personal Access Token（scope: repo），不要写入仓库文件。
+
 ## 目录
 
 ```
