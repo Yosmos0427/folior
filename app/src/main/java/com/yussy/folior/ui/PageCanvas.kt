@@ -689,8 +689,9 @@ class PageCanvas @JvmOverloads constructor(
         val slot = slotAt(vx, vy) ?: return
         drawSlot = slot
         liveRaw.clear()
-        liveRaw.add((vx - slot.rect.left) / slot.rect.width())
-        liveRaw.add((vy - slot.rect.top) / slot.rect.height())
+        // 笔画只落在所属页/墙内（超出边界的落点钳制到边缘）
+        liveRaw.add(((vx - slot.rect.left) / slot.rect.width()).coerceIn(0f, 1f))
+        liveRaw.add(((vy - slot.rect.top) / slot.rect.height()).coerceIn(0f, 1f))
         liveRaw.add(pressure)
         drawing = true
         rebuildLive()
@@ -699,8 +700,8 @@ class PageCanvas @JvmOverloads constructor(
 
     private fun extendStroke(vx: Float, vy: Float, pressure: Float) {
         val slot = drawSlot ?: return
-        liveRaw.add((vx - slot.rect.left) / slot.rect.width())
-        liveRaw.add((vy - slot.rect.top) / slot.rect.height())
+        liveRaw.add(((vx - slot.rect.left) / slot.rect.width()).coerceIn(0f, 1f))
+        liveRaw.add(((vy - slot.rect.top) / slot.rect.height()).coerceIn(0f, 1f))
         liveRaw.add(pressure)
         rebuildLive()
         invalidate()
@@ -724,9 +725,14 @@ class PageCanvas @JvmOverloads constructor(
         val aspect = slot.rect.width() / slot.rect.height()
         val padY = brush.width * 0.7f
         val padX = padY / aspect
-        val x0 = minX - padX; val y0 = minY - padY
-        val bw = (maxX - minX) + padX * 2f
-        val bh = (maxY - minY) + padY * 2f
+        var x0 = minX - padX; var y0 = minY - padY
+        var bw = (maxX - minX) + padX * 2f
+        var bh = (maxY - minY) + padY * 2f
+        // 边界框整体限制在页面/墙内（笔画不越界，也不会误触发墙外幽灵预览）
+        x0 = x0.coerceAtLeast(0f)
+        y0 = y0.coerceAtLeast(0f)
+        bw = (x0 + bw).coerceAtMost(1f) - x0
+        bh = (y0 + bh).coerceAtMost(1f) - y0
         val rel = mutableListOf<Float>()
         var j = 0
         while (j < liveRaw.size) {
