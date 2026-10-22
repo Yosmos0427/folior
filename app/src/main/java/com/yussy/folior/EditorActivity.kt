@@ -475,18 +475,17 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
-    /** 本次导入中超出墙面、被等比缩小的提示（导入结束后统一展示） */
+    /** 本次导入中超出墙面的提示（导入结束后统一展示） */
     private val oversizeNotes = mutableListOf<String>()
 
-    /** 把照片实际尺寸等比缩放到能完整放进墙内（contain，不裁切画面）。 */
-    private fun fitToWall(rawW: Float, rawH: Float, wall: Page): Triple<Float, Float, Boolean> {
-        val ww = wall.widthMm(project)
-        val wh = wall.heightMm(project)
-        val s = kotlin.math.min(1f, kotlin.math.min(ww / rawW, wh / rawH))
-        return Triple(rawW * s, rawH * s, s < 0.999f)
-    }
-
     private fun fmtCm(mm: Float): String = "${(mm / 10f).toInt()}"
+
+    /** 元素横向可用范围：框比页面大时允许负值（溢出），保证始终覆盖画面 */
+    private fun clampX(w: Float, x: Float): Float =
+        if (w >= 1f) x.coerceIn(1f - w, 0f) else x.coerceIn(0f, 1f - w)
+
+    private fun clampY(h: Float, y: Float): Float =
+        if (h >= 1f) y.coerceIn(1f - h, 0f) else y.coerceIn(0f, 1f - h)
 
     /** 展览：照片按实际尺寸摆上墙 —— 实际尺寸 = 原始像素 ÷ PPI（EXIF，缺省 300）。 */
     private fun placeOnWall(imgId: String, wall: Page, order: Int): Item {
@@ -507,18 +506,17 @@ class EditorActivity : AppCompatActivity() {
             printH = printW / aspect
         }
         val ww = wall.widthMm(project); val wh = wall.heightMm(project)
-        // 超出墙面任一边时等比缩小到完整可见（不裁掉画面）
-        val (fitW, fitH, scaled) = fitToWall(printW, printH, wall)
-        if (scaled) {
-            oversizeNotes.add("${fmtCm(printW)}×${fmtCm(printH)}cm → ${fmtCm(fitW)}×${fmtCm(fitH)}cm")
-            printW = fitW; printH = fitH
+        // 真实尺寸，不做缩放：超出墙面的部分直接留在墙外（画布按墙边界裁切）
+        val w = printW / ww
+        val h = printH / wh
+        if (w > 1.001f || h > 1.001f) {
+            oversizeNotes.add("${fmtCm(printW)}×${fmtCm(printH)}cm（墙面 ${fmtCm(ww)}×${fmtCm(wh)}cm）")
         }
-        val w = (printW / ww).coerceIn(0.005f, 1f)
-        val h = (printH / wh).coerceIn(0.005f, 1f)
         val (cx, cy) = nextInsertSlot(order)
+        val x = clampX(w, cx - w / 2f)
+        val y = clampY(h, cy - h / 2f)
         return Item(type = Item.TYPE_PHOTO, imgId = imgId, printMm = printW,
-            x = (cx - w / 2).coerceIn(0f, 1f - w),
-            y = (cy - h / 2).coerceIn(0f, 1f - h), w = w, h = h)
+            x = x, y = y, w = w, h = h)
     }
 
     /** 修改照片实际宽度（cm），按比例重算在墙上的占比。 */
@@ -539,18 +537,23 @@ class EditorActivity : AppCompatActivity() {
             .setView(input)
             .setPositiveButton("确定") { _, _ ->
                 val cm = input.text.toString().toFloatOrNull() ?: return@setPositiveButton
-                val rawW = (cm * 10f).coerceIn(10f, 20000f)
+                val newWmm = (cm * 10f).coerceIn(10f, 20000f)
                 val imgAspect = (item.w * ww) / (item.h * wh)
-                val rawH = rawW / imgAspect
-                val (fitW, fitH, scaled) = fitToWall(rawW, rawH, wall)
-                item.printMm = fitW
-                item.w = (fitW / ww).coerceIn(0.005f, 1f)
-                item.h = (fitH / wh).coerceIn(0.005f, 1f)
+                val newHmm = newWmm / imgAspect
+                // 保持当前中心位置，尺寸可超出墙面
+                val cxNow = item.x + item.w / 2f
+                val cyNow = item.y + item.h / 2f
+                item.printMm = newWmm
+                item.w = (newWmm / ww).coerceAtMost(6f)
+                item.h = (newHmm / wh).coerceAtMost(6f)
+                item.x = clampX(item.w, cxNow - item.w / 2f)
+                item.y = clampY(item.h, cyNow - item.h / 2f)
                 canvas.invalidate(); scheduleSave()
+                val over = item.w > 1.001f || item.h > 1.001f
                 Toast.makeText(this,
-                    if (scaled) "超出墙面，已等比缩小至 ${fmtCm(fitW)}×${fmtCm(fitH)}cm"
+                    if (over) "已设为 ${cm.toInt()}cm 宽，超出墙面部分会被裁切"
                     else "照片尺寸已设为 ${cm.toInt()}cm 宽",
-                    if (scaled) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+                    if (over) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("取消", null)
             .show()
@@ -565,17 +568,17 @@ class EditorActivity : AppCompatActivity() {
         val ow = owner.widthMm(project); val oh = owner.heightMm(project)
         val tw = target.widthMm(project); val th = target.heightMm(project)
         if (item.type == Item.TYPE_PHOTO && item.printMm != null) {
-            // 有实际尺寸：保持物理大小
+            // 有实际尺寸：保持物理大小（允许超出目标墙）
             val physH = item.printMm!! * (item.h * oh) / (item.w * ow)
-            item.w = (item.printMm!! / tw).coerceIn(0.005f, 1f)
-            item.h = (physH / th).coerceIn(0.005f, 1f)
+            item.w = (item.printMm!! / tw).coerceAtMost(6f)
+            item.h = (physH / th).coerceAtMost(6f)
         } else {
             // 按与页面宽度的占比换算
-            item.w = (item.w * ow / tw).coerceIn(0.05f, 1f)
-            item.h = (item.h * oh / th).coerceIn(0.05f, 1f)
+            item.w = (item.w * ow / tw).coerceIn(0.05f, 6f)
+            item.h = (item.h * oh / th).coerceIn(0.05f, 6f)
         }
-        item.x = ((1f - item.w) / 2f).coerceIn(0f, 1f - item.w)
-        item.y = ((1f - item.h) / 2f).coerceIn(0f, 1f - item.h)
+        item.x = clampX(item.w, (1f - item.w) / 2f)
+        item.y = clampY(item.h, (1f - item.h) / 2f)
         target.items.add(item)
         canvas.select(item)
         refreshAll()
@@ -783,7 +786,7 @@ class EditorActivity : AppCompatActivity() {
                 if (oversizeNotes.isNotEmpty()) {
                     val sample = oversizeNotes.first()
                     Toast.makeText(this,
-                        "有 ${oversizeNotes.size} 张超出墙面，已等比缩小显示：$sample",
+                        "有 ${oversizeNotes.size} 张超出墙面（如 $sample），超出部分在墙外被裁切，可拖动照片调整可见区域",
                         Toast.LENGTH_LONG).show()
                     oversizeNotes.clear()
                 }
