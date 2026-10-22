@@ -1073,9 +1073,9 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     /**
-     * 拖拽右下角手柄调节大小：以两轴中拖动比例更大者为缩放系数，
-     * 长宽【同步等比缩放】（文字、照片、色块、笔画统一行为）；
-     * 中心保持不动；墙上的照片同步更新实际尺寸。
+     * 拖拽右下角手柄调节大小：宽高【各自独立】随手指任意缩放（不锁比例），
+     * 文字、照片、色块、笔画统一行为；中心保持不动；
+     * 墙上的照片实际宽度跟随宽度轴缩放。
      */
     private fun handleResizeMove(ev: MotionEvent) {
         val it = selected ?: return
@@ -1088,14 +1088,12 @@ class PageCanvas @JvmOverloads constructor(
         val dx = ev.x - cx; val dy = ev.y - cy
         val lx = abs(dx * cos(rad) - dy * sin(rad)).toFloat()
         val ly = abs(dx * sin(rad) + dy * cos(rad)).toFloat()
-        // 等比：取主导轴的缩放系数
-        val sx = (lx * 2f) / (it.w * slot.rect.width())
-        val sy = (ly * 2f) / (it.h * slot.rect.height())
-        val k = max(sx, sy).coerceAtLeast(0.02f / min(it.w, it.h)).coerceAtMost(32f)
-        it.w *= k
-        it.h *= k
-        // 墙上照片：实际打印宽度同步缩放
-        if (it.printMm != null) it.printMm = it.printMm!! * k
+        val oldW = it.w
+        it.w = (lx * 2f / slot.rect.width()).coerceIn(0.02f, 8f)
+        it.h = (ly * 2f / slot.rect.height()).coerceIn(0.02f, 8f)
+        // 墙上照片：实际打印宽度跟随宽度轴
+        if (it.printMm != null && oldW > 0f)
+            it.printMm = it.printMm!! * (it.w / oldW)
         // 中心保持
         it.x = cxN - it.w / 2f
         it.y = cyN - it.h / 2f
