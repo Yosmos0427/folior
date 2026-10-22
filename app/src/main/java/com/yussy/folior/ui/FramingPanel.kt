@@ -46,9 +46,18 @@ class FramingPanel(context: Context) : LinearLayout(context) {
     private fun rebuild() {
         removeAllViews()
         orientation = VERTICAL
-        val pad = px(14f)
-        setPadding(pad, px(6f), pad, px(6f))
         val it = item ?: return
+        // 内容放入内部 ScrollView：面板高度受限（横屏）时仍可滚动到达全部选项
+        val root = LinearLayout(context).apply {
+            orientation = VERTICAL
+            val pad = px(14f)
+            setPadding(pad, px(6f), pad, px(6f))
+        }
+        val scroll = android.widget.ScrollView(context).apply {
+            isVerticalScrollBarEnabled = false
+        }
+        scroll.addView(root)
+        addView(scroll)
 
         fun sectionLabel(text: String) = TextView(context).apply {
             this.text = text
@@ -196,17 +205,17 @@ class FramingPanel(context: Context) : LinearLayout(context) {
         ).forEach { (name, action) ->
             addChip(presetRow, name, false) { action(); onChanged?.invoke(); rebuild() }
         }
-        addView(presetRow)
+        root.addView(presetRow)
 
         // ---- 背景衬材 ----
-        addView(sectionLabel("背景衬材"))
+        root.addView(sectionLabel("背景衬材"))
         val matRow = row()
         matRow.addView(rowLabel("材质"))
         listOf("无" to null, "纸张" to "paper", "木板" to "wood",
             "金属" to "metal", "亚克力" to "acrylic").forEach { (n, v) ->
             addChip(matRow, n, v == it.matStyle) { it.matStyle = v; onChanged?.invoke(); rebuild() }
         }
-        addView(matRow)
+        root.addView(matRow)
 
         val matColorRow = row()
         matColorRow.addView(rowLabel("颜色"))
@@ -219,7 +228,7 @@ class FramingPanel(context: Context) : LinearLayout(context) {
                 leftMargin = px(10f)
             }
         })
-        addView(LinearLayout(context).apply {
+        matColorRow.addView(LinearLayout(context).apply {
             orientation = VERTICAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -227,7 +236,7 @@ class FramingPanel(context: Context) : LinearLayout(context) {
                 it.matPad = p / 100f
             })
         })
-        addView(matColorRow)
+        root.addView(matColorRow)
 
         val ratioRow = row()
         ratioRow.addView(rowLabel("比例"))
@@ -237,10 +246,10 @@ class FramingPanel(context: Context) : LinearLayout(context) {
                 it.matRatio = v; onChanged?.invoke(); rebuild()
             }
         }
-        addView(ratioRow)
+        root.addView(ratioRow)
 
         // ---- 边框 ----
-        addView(sectionLabel("边框"))
+        root.addView(sectionLabel("边框"))
         val frameRow = row()
         frameRow.addView(rowLabel("材质"))
         listOf("无" to null, "木板" to "wood", "金属" to "metal", "亚克力" to "acrylic")
@@ -249,12 +258,12 @@ class FramingPanel(context: Context) : LinearLayout(context) {
                     it.frameStyle = v; onChanged?.invoke(); rebuild()
                 }
             }
-        addView(frameRow)
+        root.addView(frameRow)
 
         val frameColorRow = row()
         frameColorRow.addView(rowLabel("颜色"))
         frameColorRow.addView(colorButton("边框颜色", { it.frameColor }) { hex -> it.frameColor = hex })
-        addView(LinearLayout(context).apply {
+        frameColorRow.addView(LinearLayout(context).apply {
             orientation = VERTICAL
             gravity = Gravity.CENTER_VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -262,6 +271,6 @@ class FramingPanel(context: Context) : LinearLayout(context) {
                 it.frameW = p.coerceAtLeast(1) / 100f
             })
         })
-        addView(frameColorRow)
+        root.addView(frameColorRow)
     }
 }
