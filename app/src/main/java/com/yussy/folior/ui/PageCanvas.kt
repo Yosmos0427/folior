@@ -500,15 +500,15 @@ class PageCanvas @JvmOverloads constructor(
         canvas.drawRect(cx - fw / 2f, cy - fh / 2f, cx + fw / 2f, cy + fh / 2f, sp)
         sp.style = Paint.Style.FILL
         canvas.drawCircle(cx - fw / 2f, cy - fh / 2f, 6f, sp)
-        // 右下角：拖拽调节大小手柄（白底红圈，更醒目）
+        // 右下角：拖拽调节大小手柄（小尺寸白点 + 加粗朱红描边）
         val d = resources.displayMetrics.density
         val hx = cx + fw / 2f; val hy = cy + fh / 2f
         sp.color = 0xFFFFFFFF.toInt()
-        canvas.drawCircle(hx, hy, 11f * d, sp)
+        canvas.drawCircle(hx, hy, 5.5f * d, sp)
         sp.style = Paint.Style.STROKE
-        sp.strokeWidth = 2.5f
+        sp.strokeWidth = 3f
         sp.color = 0xFFB5442A.toInt()
-        canvas.drawCircle(hx, hy, 11f * d, sp)
+        canvas.drawCircle(hx, hy, 5.5f * d, sp)
         sp.style = Paint.Style.FILL
         canvas.restore()
         if (reordering) {
@@ -1069,7 +1069,7 @@ class PageCanvas @JvmOverloads constructor(
         val lxp = fw / 2f; val lyp = fh / 2f
         val hx = cx + (lxp * cos(rad) - lyp * sin(rad)).toFloat()
         val hy = cy + (lxp * sin(rad) + lyp * cos(rad)).toFloat()
-        return hypot(vx - hx, vy - hy) <= 22f * resources.displayMetrics.density
+        return hypot(vx - hx, vy - hy) <= 20f * resources.displayMetrics.density
     }
 
     /**

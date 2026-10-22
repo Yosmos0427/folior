@@ -33,6 +33,11 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var cropBar: LinearLayout
     private lateinit var bodyRow: LinearLayout
     private lateinit var rootLayout: LinearLayout
+    // 二级工具在竖屏布局中的原始序号（横屏停靠右侧后用于复位）
+    private var selBarIdx = 0
+    private var framingIdx = 0
+    private var cropBarIdx = 0
+    private var drawBarIdx = 0
     private lateinit var canvasWrap: android.widget.FrameLayout
     private lateinit var sideStripWrap: LinearLayout
     private lateinit var bottomStripWrap: LinearLayout
@@ -400,6 +405,12 @@ class EditorActivity : AppCompatActivity() {
             strip.hideReveal()
         }
 
+        // 记录二级工具的竖屏位置（重挂载后可复原）
+        selBarIdx = rootLayout.indexOfChild(selectionBar)
+        framingIdx = rootLayout.indexOfChild(framingPanel)
+        cropBarIdx = rootLayout.indexOfChild(cropBar)
+        drawBarIdx = rootLayout.indexOfChild(drawBar)
+
         applyOrientation()
         refreshAll()
     }
@@ -415,19 +426,45 @@ class EditorActivity : AppCompatActivity() {
         spread = land && project.type == Project.TYPE_BOOK
         canvas.spreadMode = spread
 
-        // 装裱面板：横屏停靠在工作区右侧（垂直侧栏，内部可滚动）；
-        // 竖屏回到选择工具栏下方的底部位置
-        (framingPanel.parent as? ViewGroup)?.removeView(framingPanel)
-        if (land) {
-            val pw = (resources.displayMetrics.widthPixels * 0.38f).toInt()
-            bodyRow.addView(framingPanel, LinearLayout.LayoutParams(
-                pw, ViewGroup.LayoutParams.MATCH_PARENT))
-        } else {
-            val idx = (rootLayout.indexOfChild(selectionBar) + 1)
-                .coerceAtMost(rootLayout.childCount)
-            rootLayout.addView(framingPanel, idx, LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        // 二级工具（选择栏/装裱面板/裁切栏/绘制栏）统一停靠逻辑：
+        // 横屏 → 工作区右侧垂直侧栏；竖屏 → 底部原位。
+        // 四者互斥显示（正常编辑/装裱/裁切/绘制），侧栏同一时刻只占一格。
+        val pw = (resources.displayMetrics.widthPixels * 0.38f).toInt()
+        fun dock(v: View, portraitIdx: Int, fillHeight: Boolean) {
+            (v.parent as? ViewGroup)?.removeView(v)
+            // 绘制栏：横屏转垂直排列（8 个按钮侧栏一行放不下），按钮整行铺宽
+            if (v === drawBar) {
+                drawBar.orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
+                drawBar.gravity = if (land) Gravity.CENTER_VERTICAL else Gravity.CENTER
+                for (i in 0 until drawBar.childCount) {
+                    val lp = drawBar.getChildAt(i).layoutParams as LinearLayout.LayoutParams
+                    if (land) {
+                        lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+                        lp.rightMargin = 0; lp.topMargin = dp(3f); lp.bottomMargin = dp(3f)
+                    } else {
+                        lp.width = ViewGroup.LayoutParams.WRAP_CONTENT
+                        lp.rightMargin = dp(5f); lp.topMargin = 0; lp.bottomMargin = 0
+                    }
+                    drawBar.getChildAt(i).layoutParams = lp
+                }
+            }
+            if (land) {
+                bodyRow.addView(v, LinearLayout.LayoutParams(
+                    pw,
+                    if (fillHeight) ViewGroup.LayoutParams.MATCH_PARENT
+                    else ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    gravity = Gravity.CENTER_VERTICAL
+                })
+            } else {
+                rootLayout.addView(v, portraitIdx.coerceAtMost(rootLayout.childCount),
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+            }
         }
+        dock(selectionBar, selBarIdx, false)
+        dock(framingPanel, framingIdx, true)
+        dock(cropBar, cropBarIdx, false)
+        dock(drawBar, drawBarIdx, false)
 
         if (land) {
             bottomStripWrap.visibility = View.GONE
