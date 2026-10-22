@@ -4,7 +4,9 @@ import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.EditText
@@ -12,8 +14,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * 项目设置：名称 / 类型（摄影书·摄影展览 二选一）/ 页面尺寸（宽×高，可分别输入，单位 mm）/ 预设 / 默认底色。
- * 极简风格：细线描边、墨色选中态、统一 8dp 圆角。
+ * 项目设置：名称 / 类型（摄影书·摄影展览 二选一）/ 尺寸 / 预设 / 默认底色。
+ * - 摄影书：页面尺寸，单位 mm，预设 A4 / B5 / 方册
+ * - 摄影展览：墙体大小，单位 m（0.1 – 100 m），预设为常见展厅墙体
  */
 object ProjectDialog {
 
@@ -22,11 +25,17 @@ object ProjectDialog {
         val wmm: Float, val hmm: Float, val bg: String
     )
 
-    /** 仅保留三项预设：A4 / B5 / 方册 */
-    private val PRESETS = listOf(
+    private val BOOK_PRESETS = listOf(
         Triple("A4", 210f, 297f),
         Triple("B5", 176f, 250f),
         Triple("方册", 210f, 210f)
+    )
+
+    private val WALL_PRESETS = listOf(
+        Triple("3×2m", 3000f, 2000f),
+        Triple("3×3m", 3000f, 3000f),
+        Triple("4×3m", 4000f, 3000f),
+        Triple("6×3m", 6000f, 3000f)
     )
 
     fun show(
@@ -36,6 +45,10 @@ object ProjectDialog {
     ) {
         val d = ctx.resources.displayMetrics.density
         fun px(v: Float) = (v * d).toInt()
+
+        var type = if (initType == "exhibition") "exhibition" else "book"
+        var wmm = initW
+        var hmm = initH
 
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -50,7 +63,7 @@ object ProjectDialog {
             textSize = 15f
             setSingleLine()
             setPadding(px(12f), px(11f), px(12f), px(11f))
-            background = boxBg(ctx, false)
+            background = boxBg(ctx)
             setTextColor(0xFF1A1A18.toInt())
             setHintTextColor(0xFFA8A8A0.toInt())
             layoutParams = LinearLayout.LayoutParams(
@@ -58,88 +71,129 @@ object ProjectDialog {
         }
         root.addView(titleInput)
 
-        // 尺寸区标签（类型切换时联动改文案，故提前创建）
+        // 尺寸区标签（类型切换时联动文案，提前创建）
         val sizeLabel = sectionLabel(ctx, "页面尺寸")
+        val hintView = hint(ctx, "")
 
         // ---------- 类型（二选一） ----------
         root.addView(sectionLabel(ctx, "类型"))
-        var type = if (initType == "exhibition") "exhibition" else "book"
         val typeRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
-        val bookBtn = typeChip(ctx, "摄影书")
-        val exhBtn = typeChip(ctx, "摄影展览")
+        val bookBtn = chip(ctx, "摄影书", 14f)
+        val exhBtn = chip(ctx, "摄影展览", 14f)
         val gap = px(10f)
         typeRow.addView(bookBtn, LinearLayout.LayoutParams(0, px(44f), 1f).apply { rightMargin = gap / 2 })
         typeRow.addView(exhBtn, LinearLayout.LayoutParams(0, px(44f), 1f).apply { leftMargin = gap / 2 })
         root.addView(typeRow)
 
-        fun renderType() {
-            styleType(bookBtn, type == "book")
-            styleType(exhBtn, type == "exhibition")
-            sizeLabel.text = if (type == "book") "页面尺寸" else "墙体大小"
-        }
-        bookBtn.setOnClickListener { type = "book"; renderType() }
-        exhBtn.setOnClickListener { type = "exhibition"; renderType() }
-        renderType()
-
-        // ---------- 页面尺寸 / 墙体大小（随类型切换） ----------
+        // ---------- 尺寸 ----------
         root.addView(sizeLabel)
         val sizeRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val wInput = sizeInput(ctx, initW)
-        val hInput = sizeInput(ctx, initH)
-        val times = TextView(ctx).apply {
-            text = "×"
+        var syncing = false
+        fun sizeInput(): EditText = EditText(ctx).apply {
             textSize = 15f
-            setTextColor(0xFF9A9A93.toInt())
             gravity = Gravity.CENTER
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setSingleLine()
+            setPadding(px(6f), px(11f), px(6f), px(11f))
+            background = boxBg(ctx)
+            setTextColor(0xFF1A1A18.toInt())
+        }
+        val wIn = sizeInput()
+        val hIn = sizeInput()
+        val times = TextView(ctx).apply {
+            text = "×"; textSize = 15f; gravity = Gravity.CENTER
+            setTextColor(0xFF9A9A93.toInt())
         }
         val unit = TextView(ctx).apply {
-            text = "mm"
             textSize = 12f
             setTextColor(0xFF8A8A84.toInt())
             setPadding(px(8f), 0, 0, 0)
         }
-        sizeRow.addView(wInput, LinearLayout.LayoutParams(0, px(44f), 1f))
+        sizeRow.addView(wIn, LinearLayout.LayoutParams(0, px(44f), 1f))
         sizeRow.addView(times, LinearLayout.LayoutParams(px(30f), px(44f)))
-        sizeRow.addView(hInput, LinearLayout.LayoutParams(0, px(44f), 1f))
+        sizeRow.addView(hIn, LinearLayout.LayoutParams(0, px(44f), 1f))
         sizeRow.addView(unit, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(sizeRow)
-        root.addView(hint(ctx, "宽 × 高，可分别输入；范围 30 – 2000 mm"))
+        root.addView(hintView)
+
+        fun watchField(edit: EditText, isW: Boolean) {
+            edit.addTextChangedListener(object : TextWatcher {
+                override fun afterTextChanged(s: Editable?) {
+                    if (syncing) return
+                    val v = s?.toString()?.toFloatOrNull() ?: return
+                    if (type == "exhibition") {
+                        val mm = (v * 1000f).coerceIn(100f, 100000f)
+                        if (isW) wmm = mm else hmm = mm
+                    } else {
+                        val mm = v.coerceIn(30f, 2000f)
+                        if (isW) wmm = mm else hmm = mm
+                    }
+                }
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            })
+        }
+        watchField(wIn, true)
+        watchField(hIn, false)
 
         // ---------- 预设 ----------
         root.addView(sectionLabel(ctx, "预设"))
         val presetRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        var selectedPreset = -1
-        val chips = ArrayList<TextView>()
-        PRESETS.forEachIndexed { i, (name, w, h) ->
-            val chip = presetChip(ctx, name)
-            chips.add(chip)
-            val lp = LinearLayout.LayoutParams(0, px(36f), 1f)
-            if (i > 0) lp.leftMargin = px(8f)
-            presetRow.addView(chip, lp)
-            chip.setOnClickListener {
-                selectedPreset = i
-                wInput.setText(fmt(w))
-                hInput.setText(fmt(h))
-                chips.forEachIndexed { k, c -> stylePreset(ctx, c, k == selectedPreset) }
-            }
-            stylePreset(ctx, chip, false)
         }
         root.addView(presetRow)
-        // 初始尺寸正好命中某个预设时高亮
-        PRESETS.indexOfFirst { it.second == initW && it.third == initH }.let { hit ->
-            if (hit >= 0) { selectedPreset = hit; stylePreset(ctx, chips[hit], true) }
+
+        fun fmt(mm: Float, meters: Boolean): String {
+            if (!meters) return if (mm == mm.toInt().toFloat()) mm.toInt().toString()
+            else String.format("%.1f", mm).trimEnd('0').trimEnd('.')
+            val m = mm / 1000f
+            return if (m == m.toInt().toFloat()) m.toInt().toString()
+            else String.format("%.2f", m).trimEnd('0').trimEnd('.')
         }
+
+        fun renderSize() {
+            syncing = true
+            val meters = type == "exhibition"
+            unit.text = if (meters) "m" else "mm"
+            wIn.setText(fmt(wmm, meters))
+            hIn.setText(fmt(hmm, meters))
+            sizeLabel.text = if (meters) "墙体大小" else "页面尺寸"
+            hintView.text = if (meters)
+                "宽 × 高，单位米（m），可分别输入；范围 0.1 – 100 m"
+            else
+                "宽 × 高，可分别输入；范围 30 – 2000 mm"
+            // 预设重建
+            presetRow.removeAllViews()
+            val presets = if (meters) WALL_PRESETS else BOOK_PRESETS
+            presets.forEachIndexed { i, (name, w, h) ->
+                val chip = chip(ctx, name, 12.5f)
+                presetRow.addView(chip, LinearLayout.LayoutParams(0, px(34f), 1f).apply {
+                    if (i > 0) leftMargin = px(8f)
+                })
+                chip.setOnClickListener {
+                    wmm = w; hmm = h
+                    renderSize()
+                }
+            }
+            syncing = false
+        }
+
+        fun renderType() {
+            styleChip(bookBtn, type == "book", solid = true)
+            styleChip(exhBtn, type == "exhibition", solid = true)
+            renderSize()
+        }
+        bookBtn.setOnClickListener { type = "book"; renderType() }
+        exhBtn.setOnClickListener { type = "exhibition"; renderType() }
+        renderType()
 
         // ---------- 默认底色 ----------
         root.addView(sectionLabel(ctx, "默认底色"))
@@ -148,13 +202,13 @@ object ProjectDialog {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
+        fun swatchBg(c: String) = GradientDrawable().apply {
+            setColor(parse(c)); cornerRadius = px(6f).toFloat()
+            setStroke(px(1f), 0x22000000)
+        }
         val swatch = TextView(ctx).apply {
-            setBackgroundColor(parse(bg))
+            background = swatchBg(bg)
             layoutParams = LinearLayout.LayoutParams(px(34f), px(34f))
-            background = GradientDrawable().apply {
-                setColor(parse(bg)); cornerRadius = px(6f).toFloat()
-                setStroke(px(1f), 0x22000000)
-            }
         }
         val pick = TextView(ctx).apply {
             text = "选择颜色"
@@ -164,10 +218,7 @@ object ProjectDialog {
             setOnClickListener {
                 ColorPickerDialog.show(ctx, "默认底色", bg) { c ->
                     bg = c
-                    swatch.background = GradientDrawable().apply {
-                        setColor(parse(c)); cornerRadius = px(6f).toFloat()
-                        setStroke(px(1f), 0x22000000)
-                    }
+                    swatch.background = swatchBg(c)
                 }
             }
         }
@@ -183,8 +234,18 @@ object ProjectDialog {
             .create()
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val w = (wInput.text.toString().toFloatOrNull() ?: initW).coerceIn(30f, 2000f)
-            val h = (hInput.text.toString().toFloatOrNull() ?: initH).coerceIn(30f, 2000f)
+            val meters = type == "exhibition"
+            val w: Float
+            val h: Float
+            if (meters) {
+                w = ((wIn.text.toString().toFloatOrNull() ?: (wmm / 1000f)) * 1000f)
+                    .coerceIn(100f, 100000f)
+                h = ((hIn.text.toString().toFloatOrNull() ?: (hmm / 1000f)) * 1000f)
+                    .coerceIn(100f, 100000f)
+            } else {
+                w = (wIn.text.toString().toFloatOrNull() ?: wmm).coerceIn(30f, 2000f)
+                h = (hIn.text.toString().toFloatOrNull() ?: hmm).coerceIn(30f, 2000f)
+            }
             onDone(Result(titleInput.text.toString().ifBlank { "未命名" }, type, w, h, bg))
             dialog.dismiss()
         }
@@ -198,9 +259,9 @@ object ProjectDialog {
             textSize = 11.5f
             letterSpacing = 0.06f
             setTextColor(0xFF8A8A84.toInt())
-            setPadding((2 * ctx.resources.displayMetrics.density).toInt(),
-                ((if (first) 4 else 16) * ctx.resources.displayMetrics.density).toInt(),
-                0, (7 * ctx.resources.displayMetrics.density).toInt())
+            val dd = ctx.resources.displayMetrics.density
+            setPadding((2 * dd).toInt(),
+                ((if (first) 4 else 16) * dd).toInt(), 0, (7 * dd).toInt())
         }
 
     private fun hint(ctx: Context, text: String): TextView =
@@ -212,42 +273,24 @@ object ProjectDialog {
             setPadding(p, p, 0, 0)
         }
 
-    private fun boxBg(ctx: Context, focus: Boolean): GradientDrawable {
-        val d = ctx.resources.displayMetrics.density
+    private fun boxBg(c: Context): GradientDrawable {
+        val d = c.resources.displayMetrics.density
         return GradientDrawable().apply {
             cornerRadius = 8f * d
             setColor(0xFFFFFFFF.toInt())
-            setStroke((if (focus) 1.4f else 1f * 1f).let { (it * d).toInt() },
-                if (focus) 0xFFB5442A.toInt() else 0xFFDDDDD6.toInt())
+            setStroke((1 * d).toInt(), 0xFFDDDDD6.toInt())
         }
     }
 
-    private fun sizeInput(ctx: Context, value: Float): EditText {
-        val d = ctx.resources.displayMetrics.density
-        return EditText(ctx).apply {
-            setText(fmt(value))
-            textSize = 15f
-            gravity = Gravity.CENTER
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-            setSingleLine()
-            setPadding((6 * d).toInt(), 0, (6 * d).toInt(), 0)
-            background = boxBg(ctx, false)
-            setTextColor(0xFF1A1A18.toInt())
-        }
-    }
-
-    private fun typeChip(ctx: Context, text: String): TextView {
-        val d = ctx.resources.displayMetrics.density
-        return TextView(ctx).apply {
+    private fun chip(ctx: Context, text: String, size: Float): TextView =
+        TextView(ctx).apply {
             this.text = text
-            textSize = 14f
+            textSize = size
             gravity = Gravity.CENTER
             isClickable = true
-            setPadding(0, 0, 0, 0)
         }
-    }
 
-    private fun styleType(v: TextView, selected: Boolean) {
+    private fun styleChip(v: TextView, selected: Boolean, solid: Boolean) {
         val d = v.resources.displayMetrics.density
         v.setTextColor(if (selected) Color.WHITE else 0xFF4A4A45.toInt())
         v.background = GradientDrawable().apply {
@@ -256,30 +299,6 @@ object ProjectDialog {
             if (!selected) setStroke((1 * d).toInt(), 0xFFDDDDD6.toInt())
         }
     }
-
-    private fun presetChip(ctx: Context, text: String): TextView {
-        val d = ctx.resources.displayMetrics.density
-        return TextView(ctx).apply {
-            this.text = text
-            textSize = 13f
-            gravity = Gravity.CENTER
-            isClickable = true
-        }
-    }
-
-    private fun stylePreset(ctx: Context, v: TextView, selected: Boolean) {
-        val d = ctx.resources.displayMetrics.density
-        v.setTextColor(if (selected) 0xFFB5442A.toInt() else 0xFF4A4A45.toInt())
-        v.background = GradientDrawable().apply {
-            cornerRadius = 8f * d
-            setColor(if (selected) 0xFFFBEFEB.toInt() else 0x00000000)
-            setStroke((1 * d).toInt(),
-                if (selected) 0xFFB5442A.toInt() else 0xFFDDDDD6.toInt())
-        }
-    }
-
-    private fun fmt(v: Float): String =
-        if (v == v.toInt().toFloat()) v.toInt().toString() else String.format("%.1f", v)
 
     private fun parse(c: String?): Int = try {
         Color.parseColor(c ?: "#FFFFFF")

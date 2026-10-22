@@ -101,6 +101,8 @@ data class Item(
     var frameStroke: Boolean = false,
     /** 简易装裱：null=无 / "mat"=卡纸 / "frame"=木框 */
     var frameStyle: String? = null,
+    /** 照片实际打印宽度（mm），用于展览墙体按真实比例摆放；null = 未指定 */
+    var printMm: Float? = null,
     // text
     var text: String = "",
     var fontScale: Float = 0.04f,    // 字号 = 页高的比例
@@ -132,6 +134,7 @@ data class Item(
             it.cropCy = o.optDouble("cropCy", 0.5).toFloat()
             it.frameStroke = o.optBoolean("frameStroke", false)
             it.frameStyle = if (o.isNull("frameStyle")) null else o.optString("frameStyle")
+            it.printMm = if (o.isNull("printMm")) null else o.optDouble("printMm").toFloat()
             it.text = o.optString("text", "")
             it.fontScale = o.optDouble("fontScale", 0.04).toFloat()
             it.color = o.optString("color", "#1A1A18")
@@ -156,6 +159,7 @@ data class Item(
         o.put("cropCx", cropCx.toDouble()); o.put("cropCy", cropCy.toDouble())
         o.put("frameStroke", frameStroke)
         o.put("frameStyle", frameStyle ?: JSONObject.NULL)
+        o.put("printMm", printMm ?: JSONObject.NULL)
         o.put("text", text)
         o.put("fontScale", fontScale.toDouble())
         o.put("color", color); o.put("bold", bold); o.put("italic", italic)

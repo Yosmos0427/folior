@@ -156,6 +156,15 @@ class EditorActivity : AppCompatActivity() {
             Toast.makeText(this, "装裱：$name", Toast.LENGTH_SHORT).show()
             canvas.invalidate(); scheduleSave()
         }
+        selBtn("尺寸") {
+            val it = selected() ?: return@selBtn
+            if (it.type != Item.TYPE_PHOTO) return@selBtn
+            if (project.type != Project.TYPE_EXHIBITION) {
+                Toast.makeText(this, "实际尺寸仅用于展览墙体", Toast.LENGTH_SHORT).show()
+                return@selBtn
+            }
+            editPhotoPrintSize(it)
+        }
         selBtn("编辑") { editSelected() }
         selBtn("复制") { duplicateSelected() }
         selBtn("置顶") { bringTop() }
@@ -233,6 +242,9 @@ class EditorActivity : AppCompatActivity() {
         canvas.onModified = { scheduleSave(); strip.refresh() }
         canvas.onOpenCrop = { canvas.enterCrop(it); updateBars() }
         canvas.onFlip = { dir -> flipSpread(dir) }
+        canvas.onDragTargetAt = { x, y -> strip.pageAt(x, y) }
+        canvas.onStripHighlight = { idx -> strip.setDragTarget(idx) }
+        canvas.onItemDropToPage = { item, idx -> transferItemTo(item, idx) }
 
         strip.project = project
         strip.onPageSelected = { idx ->
@@ -381,28 +393,41 @@ class EditorActivity : AppCompatActivity() {
             else "已删除第 ${pos + 1} 页", Toast.LENGTH_SHORT).show()
     }
 
-    /** 新建自定义尺寸页面（摄影书）/ 新建墙体（展览）。 */
+    /** 新建自定义尺寸页面（摄影书）/ 新建墙体（展览，单位米）。 */
     private fun addCustomSizePage() {
         val isExh = project.type == Project.TYPE_EXHIBITION
-        PageSizeDialog.show(this,
-            if (isExh) "新建墙体尺寸" else "新建自定义页面尺寸",
-            project.pageWmm, project.pageHmm) { w, h ->
-            project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h, bg = page().bg))
-            pageIndex += 1
-            refreshAll()
-            scheduleSave()
-            Toast.makeText(this,
-                if (isExh) "已新建墙体 ${w.toInt()}×${h.toInt()}mm"
-                else "已新建页面 ${w.toInt()}×${h.toInt()}mm", Toast.LENGTH_SHORT).show()
+        if (isExh) {
+            showWall(this, "新建墙体",
+                project.pageWmm, project.pageHmm,
+                presets = listOf(
+                    Triple("3×2m", 3000f, 2000f),
+                    Triple("3×3m", 3000f, 3000f),
+                    Triple("4×3m", 4000f, 3000f),
+                    Triple("6×3m", 6000f, 3000f))) { w, h ->
+                project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h, bg = page().bg))
+                pageIndex += 1
+                refreshAll()
+                scheduleSave()
+                Toast.makeText(this,
+                    "已新建墙体 ${w / 1000f}×${h / 1000f} m", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            PageSizeDialog.show(this, "新建自定义页面尺寸",
+                project.pageWmm, project.pageHmm) { w, h ->
+                project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h, bg = page().bg))
+                pageIndex += 1
+                refreshAll()
+                scheduleSave()
+                Toast.makeText(this, "已新建页面 ${w.toInt()}×${h.toInt()}mm",
+                    Toast.LENGTH_SHORT).show()
+            }
         }
     }
 
-    /** 修改当前页/墙尺寸。 */
+    /** 修改当前页尺寸（仅摄影书）。 */
     private fun pageSettings() {
         val pg = page()
-        val isExh = project.type == Project.TYPE_EXHIBITION
-        PageSizeDialog.show(this,
-            if (isExh) "墙体尺寸" else "页面尺寸",
+        PageSizeDialog.show(this, "页面尺寸",
             pg.widthMm(project), pg.heightMm(project)) { w, h ->
             pg.wmm = w; pg.hmm = h
             canvas.invalidateLayout()
@@ -411,6 +436,83 @@ class EditorActivity : AppCompatActivity() {
             Toast.makeText(this, "尺寸已更新为 ${w.toInt()}×${h.toInt()}mm",
                 Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /** 展览：照片按实际尺寸摆上墙（默认长边 40cm，可后续修改）。 */
+    private fun placeOnWall(imgId: String, wall: Page, order: Int): Item {
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(Store.imageFile(this, imgId)?.absolutePath, opts)
+        val aspect = if (opts.outWidth > 0 && opts.outHeight > 0)
+            opts.outWidth.toFloat() / opts.outHeight else 1.5f
+        val printW = if (aspect >= 1f) 400f else 400f * aspect   // mm，长边 40cm
+        val printH = printW / aspect
+        val ww = wall.widthMm(project); val wh = wall.heightMm(project)
+        val w = (printW / ww).coerceIn(0.005f, 1f)
+        val h = (printH / wh).coerceIn(0.005f, 1f)
+        val (cx, cy) = nextInsertSlot(order)
+        return Item(type = Item.TYPE_PHOTO, imgId = imgId, printMm = printW,
+            x = (cx - w / 2).coerceIn(0f, 1f - w),
+            y = (cy - h / 2).coerceIn(0f, 1f - h), w = w, h = h)
+    }
+
+    /** 修改照片实际宽度（cm），按比例重算在墙上的占比。 */
+    private fun editPhotoPrintSize(item: Item) {
+        val wall = pageOfItem(item) ?: page()
+        val ww = wall.widthMm(project); val wh = wall.heightMm(project)
+        val input = android.widget.EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER or
+                android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+            setText(String.format("%.0f", (item.printMm ?: 400f) / 10f))
+            hint = "照片宽度（cm）"
+            setSingleLine()
+            val d = resources.displayMetrics.density
+            setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
+        }
+        AlertDialog.Builder(this)
+            .setTitle("照片实际宽度（cm）")
+            .setView(input)
+            .setPositiveButton("确定") { _, _ ->
+                val cm = input.text.toString().toFloatOrNull() ?: return@setPositiveButton
+                val newWmm = (cm * 10f).coerceIn(10f, 20000f)
+                val imgAspect = (item.w * ww) / (item.h * wh)
+                val newHmm = newWmm / imgAspect
+                item.printMm = newWmm
+                item.w = (newWmm / ww).coerceIn(0.005f, 1f)
+                item.h = (newHmm / wh).coerceIn(0.005f, 1f)
+                canvas.invalidate(); scheduleSave()
+                Toast.makeText(this, "照片尺寸已设为 ${cm.toInt()}cm 宽",
+                    Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
+    /** 把元素转移到目标页/墙（保持物理比例）。 */
+    private fun transferItemTo(item: Item, targetIdx: Int) {
+        val owner = pageOfItem(item) ?: return
+        val target = project.pages.getOrNull(targetIdx) ?: return
+        if (target === owner) return
+        owner.items.remove(item)
+        val ow = owner.widthMm(project); val oh = owner.heightMm(project)
+        val tw = target.widthMm(project); val th = target.heightMm(project)
+        if (item.type == Item.TYPE_PHOTO && item.printMm != null) {
+            // 有实际尺寸：保持物理大小
+            val physH = item.printMm!! * (item.h * oh) / (item.w * ow)
+            item.w = (item.printMm!! / tw).coerceIn(0.005f, 1f)
+            item.h = (physH / th).coerceIn(0.005f, 1f)
+        } else {
+            // 按与页面宽度的占比换算
+            item.w = (item.w * ow / tw).coerceIn(0.05f, 1f)
+            item.h = (item.h * oh / th).coerceIn(0.05f, 1f)
+        }
+        item.x = ((1f - item.w) / 2f).coerceIn(0f, 1f - item.w)
+        item.y = ((1f - item.h) / 2f).coerceIn(0f, 1f - item.h)
+        target.items.add(item)
+        canvas.select(item)
+        refreshAll()
+        scheduleSave()
+        val name = if (project.type == Project.TYPE_EXHIBITION) "墙" else "页"
+        Toast.makeText(this, "已移到第 ${targetIdx + 1} $name", Toast.LENGTH_SHORT).show()
     }
 
     private fun selected(): Item? = canvas.selected
@@ -455,9 +557,11 @@ class EditorActivity : AppCompatActivity() {
             // 裁剪按钮只对照片有效；编辑对文字/色块有效 —— 动态调整第一个按钮文案
             (selectionBar.getChildAt(0) as LinearLayout).let { row ->
                 val isPhoto = it.type == Item.TYPE_PHOTO
+                val isExh = project.type == Project.TYPE_EXHIBITION
                 (row.getChildAt(0) as TextView).visibility = if (isPhoto) View.VISIBLE else View.GONE
                 (row.getChildAt(1) as TextView).visibility = if (isPhoto) View.VISIBLE else View.GONE
-                (row.getChildAt(2) as TextView).visibility = if (isPhoto) View.GONE else View.VISIBLE
+                (row.getChildAt(2) as TextView).visibility = if (isPhoto && isExh) View.VISIBLE else View.GONE
+                (row.getChildAt(3) as TextView).visibility = if (isPhoto) View.GONE else View.VISIBLE
             }
         }
     }
@@ -475,16 +579,14 @@ class EditorActivity : AppCompatActivity() {
     // ---------- 菜单 ----------
 
     private fun showMenu() {
-        val pageItem = if (project.type == Project.TYPE_EXHIBITION) "墙体设置" else "页面设置"
-        val options = arrayOf("项目设置", pageItem, "导出 PDF", "导出工程文件 (.folio)")
+        val actions = mutableListOf<Pair<String, () -> Unit>>(
+            "项目设置" to { projectSettings() })
+        if (project.type != Project.TYPE_EXHIBITION) actions.add("页面设置" to { pageSettings() })
+        actions.add("导出 PDF" to { exportPdf() })
+        actions.add("导出工程文件 (.folio)" to { exportBundle() })
         AlertDialog.Builder(this)
-            .setItems(options) { _, which ->
-                when (which) {
-                    0 -> projectSettings()
-                    1 -> pageSettings()
-                    2 -> exportPdf()
-                    3 -> exportBundle()
-                }
+            .setItems(actions.map { it.first }.toTypedArray()) { _, which ->
+                actions[which].second()
             }.show()
     }
 
@@ -565,12 +667,27 @@ class EditorActivity : AppCompatActivity() {
                     Toast.makeText(this, "照片读取失败，请重试", Toast.LENGTH_SHORT).show()
                     return@runOnUiThread
                 }
+                val isExh = project.type == Project.TYPE_EXHIBITION
                 if (photoAddMode == 1) {
-                    // 全部加到当前页，依次错位叠放
-                    imgIds.forEachIndexed { i, id -> addImportedPhoto(id, i) }
+                    // 全部加到当前页/墙
+                    imgIds.forEachIndexed { i, id ->
+                        if (isExh) page().items.add(placeOnWall(id, page(), i))
+                        else addImportedPhoto(id, i)
+                    }
                     canvas.select(page().items.lastOrNull())
-                    Toast.makeText(this, "已添加 ${imgIds.size} 张到第 ${pageIndex + 1} 页",
+                    Toast.makeText(this,
+                        "已添加 ${imgIds.size} 张到第 ${pageIndex + 1} ${if (isExh) "墙" else "页"}",
                         Toast.LENGTH_SHORT).show()
+                } else if (isExh) {
+                    // 展览：新建一面默认尺寸的墙，照片按实际尺寸摆上
+                    val wall = Page(wmm = project.pageWmm, hmm = project.pageHmm, bg = page().bg)
+                    imgIds.forEachIndexed { i, id -> wall.items.add(placeOnWall(id, wall, i)) }
+                    project.pages.add(pageIndex + 1, wall)
+                    pageIndex += 1
+                    canvas.select(null)
+                    refreshAll()
+                    Toast.makeText(this, "已新建墙体并放置 ${imgIds.size} 张照片",
+                        Toast.LENGTH_LONG).show()
                 } else {
                     // 每张照片一页，接在当前页之后
                     var insertAt = pageIndex

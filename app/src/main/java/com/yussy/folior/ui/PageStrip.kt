@@ -27,8 +27,7 @@ import com.yussy.folior.model.widthMm
  *   [ 固定「圆圈加号」按钮区 ] + [ 可滚动页面缩略图列表 ]
  * - 竖屏横向栏：缩略图在上、序号在下；**上滑呼出删除按钮**
  * - 横屏纵向栏：缩略图在左、序号在右；**右滑呼出删除按钮**
- * - 长按拖动调整页序（ItemTouchHelper）
- * 缩略图按各页自身宽高比自适应。
+ * - 长按拖动调整页序；工作区拖照片到某格可转移（pageAt/setDragTarget）
  */
 class PageStrip @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
@@ -47,6 +46,9 @@ class PageStrip @JvmOverloads constructor(
     var onStripDelete: ((Int) -> Unit)? = null
 
     private var revealedPos = -1
+
+    /** 工作区拖照片悬停的目标格（高亮），-1 = 无 */
+    private var dragTargetPos = -1
 
     private val thumbCache = HashMap<String, android.graphics.Bitmap>()
     private var availW = 0
@@ -94,7 +96,7 @@ class PageStrip @JvmOverloads constructor(
         addView(divider)
         addView(rv, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
 
-        // 长按拖动 = 调整页序（不做滑动删除，删除走"滑动呼出按钮"）
+        // 长按拖动 = 调整页序（滑动删除走"滑动呼出按钮"，二者不冲突）
         val ith = ItemTouchHelper(object : ItemTouchHelper.Callback() {
             override fun getMovementFlags(r: RecyclerView, vh: RecyclerView.ViewHolder): Int =
                 if (verticalMode)
@@ -149,6 +151,7 @@ class PageStrip @JvmOverloads constructor(
             false)
         rv.recycledViewPool.clear()
         revealedPos = -1
+        dragTargetPos = -1
         applyMode()
         refresh()
     }
@@ -205,7 +208,6 @@ class PageStrip @JvmOverloads constructor(
         stripAdapter.notifyDataSetChanged()
     }
 
-    /** 删除完成 / 切页后由外部调用，收起删除按钮 */
     fun hideReveal() {
         if (revealedPos >= 0) {
             revealedPos = -1
@@ -215,12 +217,33 @@ class PageStrip @JvmOverloads constructor(
 
     private fun revealPx(): Float {
         val d = resources.displayMetrics.density
-        return if (verticalMode) 38f * d else 42f * d
+        return if (verticalMode) 38f * d else 44f * d
     }
 
     private fun selectFromStrip(pos: Int) {
         currentIndex = pos
         onPageSelected?.invoke(pos)
+        stripAdapter.notifyDataSetChanged()
+    }
+
+    // ------------- 工作区拖放目标 -------------
+
+    /** 屏幕坐标（raw）落在哪一页的缩略图上；不在栏内返回 -1 */
+    fun pageAt(rawX: Float, rawY: Float): Int {
+        val loc = IntArray(2)
+        rv.getLocationOnScreen(loc)
+        val x = rawX - loc[0]
+        val y = rawY - loc[1]
+        if (x < 0 || y < 0 || x > rv.width || y > rv.height) return -1
+        val v = rv.findChildViewUnder(x, y) ?: return -1
+        val pos = rv.getChildAdapterPosition(v)
+        return if (pos in 0 until (project?.pages?.size ?: 0)) pos else -1
+    }
+
+    /** 高亮悬停目标格 */
+    fun setDragTarget(idx: Int) {
+        if (dragTargetPos == idx) return
+        dragTargetPos = idx
         stripAdapter.notifyDataSetChanged()
     }
 
@@ -283,17 +306,27 @@ class PageStrip @JvmOverloads constructor(
                 }
             }
 
+            val selected = pos == currentIndex
+            val hovered = pos == dragTargetPos
             holder.thumb.background = GradientDrawable().apply {
-                setColor(Color.TRANSPARENT)
-                setStroke(((if (pos == currentIndex) 2f else 1f) * d).toInt(),
-                    if (pos == currentIndex) 0xFFB5442A.toInt() else 0x14000000)
+                setColor(if (hovered) 0x24B5442A else Color.TRANSPARENT)
+                setStroke(((if (selected || hovered) 2f else 1f) * d).toInt(),
+                    when {
+                        hovered -> 0xFFB5442A.toInt()
+                        selected -> 0xFFB5442A.toInt()
+                        else -> 0x14000000
+                    })
                 cornerRadius = 1.5f * d
             }
             holder.thumb.contentDescription = "第${pos + 1}页"
 
             holder.badge.text = "${pos + 1}"
             holder.badge.setTextColor(
-                if (pos == currentIndex) 0xFFB5442A.toInt() else 0xFF8A8A84.toInt())
+                when {
+                    hovered -> 0xFFB5442A.toInt()
+                    selected -> 0xFFB5442A.toInt()
+                    else -> 0xFF8A8A84.toInt()
+                })
             holder.badge.width = (16 * d).toInt()
             holder.badge.setPadding(if (verticalMode) (3 * d).toInt() else 0, 0, 0, 0)
 
@@ -325,6 +358,7 @@ class PageStrip @JvmOverloads constructor(
         private var downX = 0f
         private var downY = 0f
         private var moved = false
+        private var axisLocked = false
 
         init {
             val d = resources.displayMetrics.density
@@ -357,26 +391,40 @@ class PageStrip @JvmOverloads constructor(
                 val pos = bindingAdapterPosition
                 if (pos == RecyclerView.NO_POSITION) return@setOnTouchListener false
                 val reveal = revealPx()
-                val slop = 4f * d
+                val slop = 3f * d
                 when (ev.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        downX = ev.x; downY = ev.y; moved = false
+                        downX = ev.x; downY = ev.y; moved = false; axisLocked = false
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
-                        val delta = if (verticalMode) ev.x - downX else ev.y - downY
-                        // 横向栏：上滑（负值）；纵向栏：右滑（正值）
-                        val t = if (verticalMode) delta.coerceIn(0f, reveal)
-                               else delta.coerceIn(-reveal, 0f)
-                        if (moved || Math.abs(t) > slop) {
+                        val dx = ev.x - downX
+                        val dy = ev.y - downY
+                        // 滑动轴：横向栏=纵向滑动；纵向栏=横向滑动
+                        val axisD = if (verticalMode) dx else dy
+                        val otherD = if (verticalMode) dy else dx
+                        if (!axisLocked && Math.abs(axisD) > slop) {
+                            axisLocked = true
+                            if (Math.abs(axisD) > Math.abs(otherD) * 1.2f) {
+                                // 沿删除滑动轴主导：禁止父级（RecyclerView 滚动）拦截手势
+                                rv.requestDisallowInterceptTouchEvent(true)
+                            }
+                        }
+                        if (axisLocked) {
                             moved = true
+                            val t = (if (verticalMode) axisD.coerceIn(0f, reveal)
+                                    else axisD.coerceIn(-reveal, 0f))
                             if (verticalMode) content.translationX = t
                             else content.translationY = t
                         }
                         true
                     }
                     MotionEvent.ACTION_CANCEL -> {
-                        applyRevealState(pos)
+                        // 即使被父级拦截，也按已滑动距离判定是否呼出
+                        val dx = ev.x - downX; val dy = ev.y - downY
+                        val delta = if (verticalMode) dx else dy
+                        if (Math.abs(delta) > reveal * 0.35f) revealedPos = pos
+                        stripAdapter.notifyDataSetChanged()
                         true
                     }
                     MotionEvent.ACTION_UP -> {
@@ -384,7 +432,7 @@ class PageStrip @JvmOverloads constructor(
                         if (!moved) {
                             if (revealedPos == pos) hideReveal() else selectFromStrip(pos)
                         } else {
-                            if (Math.abs(delta) > reveal * 0.45f) revealedPos = pos
+                            if (Math.abs(delta) > reveal * 0.35f) revealedPos = pos
                             stripAdapter.notifyDataSetChanged()
                         }
                         true
@@ -392,13 +440,6 @@ class PageStrip @JvmOverloads constructor(
                     else -> false
                 }
             }
-        }
-
-        private fun applyRevealState(pos: Int) {
-            val revealed = revealedPos == pos
-            val reveal = revealPx()
-            content.translationY = if (revealed && !verticalMode) -reveal else 0f
-            content.translationX = if (revealed && verticalMode) reveal else 0f
         }
     }
 }

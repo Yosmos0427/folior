@@ -43,6 +43,14 @@ class PageCanvas @JvmOverloads constructor(
     var onFlip: ((Int) -> Unit)? = null          // -1 上一跨页 / +1 下一跨页
     var onSpanResult: ((Boolean) -> Unit)? = null
 
+    /** 元素拖动时查询预览栏目标页（raw 坐标），返回页索引或 -1 */
+    var onDragTargetAt: ((rawX: Float, rawY: Float) -> Int)? = null
+    /** 高亮预览栏目标格（-1 清除） */
+    var onStripHighlight: ((Int) -> Unit)? = null
+    /** 元素拖放到目标页/墙 */
+    var onItemDropToPage: ((item: Item, pageIdx: Int) -> Unit)? = null
+    private var dropTargetIdx = -1
+
     private data class Slot(val index: Int, val rect: RectF)
     private val slots = mutableListOf<Slot>()
 
@@ -61,6 +69,7 @@ class PageCanvas @JvmOverloads constructor(
     private var multiInitialH = 0f
     private var multiInitialX = 0f
     private var multiInitialY = 0f
+    private var multiInitialPrintMm = 0f
     private var multiInitialRot = 0f
     private var multiActive = false
 
@@ -258,6 +267,44 @@ class PageCanvas @JvmOverloads constructor(
 
         if (cropItem != null) { drawCropMode(canvas); return }
 
+        // 展览：工作区边缘实际尺寸标尺（单位：米）
+        if (p.type == Project.TYPE_EXHIBITION && slots.isNotEmpty()) {
+            val dd = resources.displayMetrics.density
+            val rp = Paint(Paint.ANTI_ALIAS_FLAG)
+            rp.color = 0x736B6B66.toInt()
+            rp.strokeWidth = 1f
+            val tp = Paint(Paint.ANTI_ALIAS_FLAG)
+            tp.color = 0xFF8A8A84.toInt()
+            tp.textSize = 9f * dd
+            for (sl in slots) {
+                val pg = p.pages.getOrNull(sl.index) ?: continue
+                val ww = pg.widthMm(p); val wh = pg.heightMm(p)
+                val pxmm = sl.rect.width() / ww
+                val pymm = sl.rect.height() / wh
+                val stepX = if (ww > 8000) 500f else 100f
+                val stepY = if (wh > 8000) 500f else 100f
+                var mm = 0f
+                while (mm <= ww + 0.5f) {
+                    val x = sl.rect.left + mm * pxmm
+                    val major = (mm.toInt() % 1000) == 0
+                    val len = if (major) 9f * dd else if ((mm.toInt() % 500) == 0) 6f * dd else 3f * dd
+                    canvas.drawLine(x, sl.rect.top - len, x, sl.rect.top, rp)
+                    if (major && mm > 0) canvas.drawText("${(mm / 1000).toInt()}", x + 3f, sl.rect.top - 11f * dd, tp)
+                    mm += stepX
+                }
+                var mv = 0f
+                while (mv <= wh + 0.5f) {
+                    val y = sl.rect.top + mv * pymm
+                    val major = (mv.toInt() % 1000) == 0
+                    val len = if (major) 9f * dd else if ((mv.toInt() % 500) == 0) 6f * dd else 3f * dd
+                    canvas.drawLine(sl.rect.left - len, y, sl.rect.left, y, rp)
+                    if (major && mv > 0) canvas.drawText("${(mv / 1000).toInt()}", sl.rect.left - 16f * dd, y - 3f, tp)
+                    mv += stepY
+                }
+                canvas.drawText("m", sl.rect.left - 16f * dd, sl.rect.top - 11f * dd, tp)
+            }
+        }
+
         // 书脊
         if (spreadMode && slots.size == 2) {
             val gx = (slots[0].rect.right + slots[1].rect.left) / 2f
@@ -416,13 +463,18 @@ class PageCanvas @JvmOverloads constructor(
                         multiInitialAngle = angle(ev)
                         multiInitialW = it.w; multiInitialH = it.h
                         multiInitialX = it.x; multiInitialY = it.y
+                        multiInitialPrintMm = it.printMm ?: 0f
                         multiInitialRot = it.rotation
                         dragging = false
                     }
                 }
             }
             MotionEvent.ACTION_MOVE -> {
-                if (reordering) { handleReorderMove(ev); lastTouch.set(ev.x, ev.y); return true }
+                if (reordering) {
+                    handleReorderMove(ev)
+                    updateDropTarget(ev)
+                    lastTouch.set(ev.x, ev.y); return true
+                }
                 if (multiActive && ev.pointerCount >= 2 && selected != null) {
                     val it = selected!!
                     val scale = dist(ev) / multiInitialDist
@@ -434,6 +486,9 @@ class PageCanvas @JvmOverloads constructor(
                     it.h = (multiInitialH * scale).coerceIn(0.02f, 4f)
                     it.x = cx0 - it.w / 2f
                     it.y = cy0 - it.h / 2f
+                    // 墙上的照片按实际尺寸等比缩放
+                    if (it.printMm != null && multiInitialPrintMm > 0f)
+                        it.printMm = multiInitialPrintMm * scale
                     it.rotation = snapAngle(multiInitialRot + deltaAngle)
                     invalidate()
                 } else if (dragging && selected != null) {
@@ -444,15 +499,39 @@ class PageCanvas @JvmOverloads constructor(
                     applySnap(it)
                     invalidate()
                 }
+                if (dragging) updateDropTarget(ev)
                 lastTouch.set(ev.x, ev.y)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                val isUp = ev.actionMasked == MotionEvent.ACTION_UP
                 if (reordering) {
+                    val item = selected
+                    if (isUp && dropTargetIdx >= 0 && item != null) {
+                        val target = dropTargetIdx
+                        dropTargetIdx = -1
+                        onStripHighlight?.invoke(-1)
+                        reordering = false
+                        onItemDropToPage?.invoke(item, target)
+                        return true
+                    }
+                    dropTargetIdx = -1
+                    onStripHighlight?.invoke(-1)
                     reordering = false
                     onModified?.invoke()
                     invalidate()
                     return true
                 }
+                if (isUp && (dragging || multiActive) && dropTargetIdx >= 0 && selected != null) {
+                    val item = selected!!
+                    val target = dropTargetIdx
+                    dropTargetIdx = -1
+                    dragging = false; multiActive = false
+                    onStripHighlight?.invoke(-1)
+                    onItemDropToPage?.invoke(item, target)
+                    return true
+                }
+                dropTargetIdx = -1
+                onStripHighlight?.invoke(-1)
                 if (multiActive || dragging) onModified?.invoke()
                 val dx = ev.x - emptyDownX
                 if (!hasItemAtDown && !multiActive &&
@@ -474,6 +553,16 @@ class PageCanvas @JvmOverloads constructor(
 
     private fun angle(ev: MotionEvent): Float =
         atan2((ev.getY(1) - ev.getY(0)).toDouble(), (ev.getX(1) - ev.getX(0)).toDouble()).toFloat()
+
+    private fun updateDropTarget(ev: MotionEvent) {
+        val it0 = selected
+        val ownerIdx = it0?.let { item ->
+            pageOf(item)?.let { pg -> project?.pages?.indexOfFirst { it === pg } }
+        } ?: -1
+        val t = onDragTargetAt?.invoke(ev.rawX, ev.rawY) ?: -1
+        dropTargetIdx = if (t >= 0 && t != ownerIdx) t else -1
+        onStripHighlight?.invoke(dropTargetIdx)
+    }
 
     /** 旋转吸附：靠近 0 / 90 / 180 / 270 度时自动对齐（阈值 8°）。 */
     fun snapAngle(deg: Float): Float {
