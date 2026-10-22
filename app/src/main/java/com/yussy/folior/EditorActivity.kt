@@ -475,6 +475,19 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
+    /** 本次导入中超出墙面、被等比缩小的提示（导入结束后统一展示） */
+    private val oversizeNotes = mutableListOf<String>()
+
+    /** 把照片实际尺寸等比缩放到能完整放进墙内（contain，不裁切画面）。 */
+    private fun fitToWall(rawW: Float, rawH: Float, wall: Page): Triple<Float, Float, Boolean> {
+        val ww = wall.widthMm(project)
+        val wh = wall.heightMm(project)
+        val s = kotlin.math.min(1f, kotlin.math.min(ww / rawW, wh / rawH))
+        return Triple(rawW * s, rawH * s, s < 0.999f)
+    }
+
+    private fun fmtCm(mm: Float): String = "${(mm / 10f).toInt()}"
+
     /** 展览：照片按实际尺寸摆上墙 —— 实际尺寸 = 原始像素 ÷ PPI（EXIF，缺省 300）。 */
     private fun placeOnWall(imgId: String, wall: Page, order: Int): Item {
         val (pxW, pxH, ppi) = Store.photoMeta(this, imgId)
@@ -494,6 +507,12 @@ class EditorActivity : AppCompatActivity() {
             printH = printW / aspect
         }
         val ww = wall.widthMm(project); val wh = wall.heightMm(project)
+        // 超出墙面任一边时等比缩小到完整可见（不裁掉画面）
+        val (fitW, fitH, scaled) = fitToWall(printW, printH, wall)
+        if (scaled) {
+            oversizeNotes.add("${fmtCm(printW)}×${fmtCm(printH)}cm → ${fmtCm(fitW)}×${fmtCm(fitH)}cm")
+            printW = fitW; printH = fitH
+        }
         val w = (printW / ww).coerceIn(0.005f, 1f)
         val h = (printH / wh).coerceIn(0.005f, 1f)
         val (cx, cy) = nextInsertSlot(order)
@@ -520,15 +539,18 @@ class EditorActivity : AppCompatActivity() {
             .setView(input)
             .setPositiveButton("确定") { _, _ ->
                 val cm = input.text.toString().toFloatOrNull() ?: return@setPositiveButton
-                val newWmm = (cm * 10f).coerceIn(10f, 20000f)
+                val rawW = (cm * 10f).coerceIn(10f, 20000f)
                 val imgAspect = (item.w * ww) / (item.h * wh)
-                val newHmm = newWmm / imgAspect
-                item.printMm = newWmm
-                item.w = (newWmm / ww).coerceIn(0.005f, 1f)
-                item.h = (newHmm / wh).coerceIn(0.005f, 1f)
+                val rawH = rawW / imgAspect
+                val (fitW, fitH, scaled) = fitToWall(rawW, rawH, wall)
+                item.printMm = fitW
+                item.w = (fitW / ww).coerceIn(0.005f, 1f)
+                item.h = (fitH / wh).coerceIn(0.005f, 1f)
                 canvas.invalidate(); scheduleSave()
-                Toast.makeText(this, "照片尺寸已设为 ${cm.toInt()}cm 宽",
-                    Toast.LENGTH_SHORT).show()
+                Toast.makeText(this,
+                    if (scaled) "超出墙面，已等比缩小至 ${fmtCm(fitW)}×${fmtCm(fitH)}cm"
+                    else "照片尺寸已设为 ${cm.toInt()}cm 宽",
+                    if (scaled) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("取消", null)
             .show()
@@ -758,6 +780,13 @@ class EditorActivity : AppCompatActivity() {
                 canvas.invalidate()
                 strip.refresh()
                 scheduleSave()
+                if (oversizeNotes.isNotEmpty()) {
+                    val sample = oversizeNotes.first()
+                    Toast.makeText(this,
+                        "有 ${oversizeNotes.size} 张超出墙面，已等比缩小显示：$sample",
+                        Toast.LENGTH_LONG).show()
+                    oversizeNotes.clear()
+                }
             }
         }.start()
     }
