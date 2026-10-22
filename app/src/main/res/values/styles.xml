@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">页册 Folior</string>
+
+    <style name="Theme.Folior" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/ink</item>
+        <item name="colorOnPrimary">@color/paper</item>
+        <item name="colorSecondary">@color/ink_soft</item>
+        <item name="android:colorBackground">@color/paper</item>
+        <item name="colorSurface">@color/paper</item>
+        <item name="colorSurfaceContainer">@color/paper_dark</item>
+        <item name="colorOnSurface">@color/ink</item>
+        <item name="colorOutline">@color/line</item>
+        <item name="android:statusBarColor">@color/paper</item>
+        <item name="android:navigationBarColor">@color/paper</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:fontFamily">sans-serif</item>
+    </style>
+
+    <style name="BtnGhost" parent="Widget.Material3.Button.TextButton">
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:letterSpacing">0.02</item>
+    </style>
+
+    <style name="MenuText">
+        <item name="android:textColor">@color/ink</item>
+    </style>
+</resources>
