@@ -30,13 +30,11 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var selectionBar: LinearLayout
     private lateinit var framingPanel: FramingPanel
     private var framingOpen = false
-    private lateinit var cropBar: LinearLayout
     private lateinit var bodyRow: LinearLayout
     private lateinit var rootLayout: LinearLayout
     // 二级工具在竖屏布局中的原始序号（横屏停靠右侧后用于复位）
     private var selBarIdx = 0
     private var framingIdx = 0
-    private var cropBarIdx = 0
     private var drawBarIdx = 0
     private lateinit var canvasWrap: android.widget.FrameLayout
     private lateinit var sideStripWrap: LinearLayout
@@ -186,7 +184,6 @@ class EditorActivity : AppCompatActivity() {
                     scheduleSave()
                 }.setNegativeButton("取消", null).show()
         }.setTextColor(0xFFB5442A.toInt())
-        selBtn("裁剪") { selected()?.let { if (it.type == Item.TYPE_PHOTO && it.imgId != null) canvas.enterCrop(it) } }
         selBtn("装裱") {
             val it = selected() ?: return@selBtn
             if (it.type != Item.TYPE_PHOTO && it.type != Item.TYPE_TEXT) return@selBtn
@@ -220,30 +217,6 @@ class EditorActivity : AppCompatActivity() {
         framingPanel.onChanged = { canvas.invalidate(); scheduleSave() }
         framingPanel.onClosed = { closeFraming() }
         root.addView(framingPanel)
-
-        // ---- 裁切确认栏 ----
-        cropBar = LinearLayout(this).apply {
-            visibility = View.GONE
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(dp(12f), dp(8f), dp(12f), dp(8f))
-        }
-        cropBar.addView(TextView(this).apply {
-            text = "取消"
-            textSize = 14f
-            setPadding(dp(24f), dp(10f), dp(24f), dp(10f))
-            setOnClickListener { canvas.exitCrop(false); updateBars() }
-        })
-        cropBar.addView(TextView(this).apply {
-            text = "完成裁切"
-            textSize = 14f
-            setTextColor(0xFFFAFAF7.toInt())
-            setBackgroundColor(0xFF1A1A18.toInt())
-            setPadding(dp(24f), dp(10f), dp(24f), dp(10f))
-            (layoutParams as? LinearLayout.LayoutParams)?.setMargins(dp(12f), 0, 0, 0)
-            setOnClickListener { canvas.exitCrop(true); updateBars(); refreshAll() }
-        })
-        root.addView(cropBar)
 
         // ---- 绘制模式工具条（进入绘制模式后替换底部工具条） ----
         drawBar = LinearLayout(this).apply {
@@ -373,7 +346,6 @@ class EditorActivity : AppCompatActivity() {
         canvas.project = project
         canvas.onSelectionChanged = { updateBars() }
         canvas.onModified = { scheduleSave(); strip.refresh() }
-        canvas.onOpenCrop = { canvas.enterCrop(it); updateBars() }
         canvas.onFlip = { dir -> flipSpread(dir) }
         canvas.onEditText = { it -> editItem(it) }
         canvas.onDragTargetAt = { x, y -> strip.pageAt(x, y) }
@@ -407,7 +379,6 @@ class EditorActivity : AppCompatActivity() {
         // 记录二级工具的竖屏位置（重挂载后可复原）
         selBarIdx = rootLayout.indexOfChild(selectionBar)
         framingIdx = rootLayout.indexOfChild(framingPanel)
-        cropBarIdx = rootLayout.indexOfChild(cropBar)
         drawBarIdx = rootLayout.indexOfChild(drawBar)
 
         applyOrientation()
@@ -462,7 +433,6 @@ class EditorActivity : AppCompatActivity() {
         }
         dock(selectionBar, selBarIdx, false)
         dock(framingPanel, framingIdx, true)
-        dock(cropBar, cropBarIdx, false)
         dock(drawBar, drawBarIdx, false)
 
         if (land) {
@@ -814,19 +784,17 @@ class EditorActivity : AppCompatActivity() {
             strip.setCurrent(pageIndex)
         }
         updatePageLabel()
-        val inCrop = canvas.cropItem != null
-        // 装裱面板打开时：目标被取消选中或裁切中 → 自动收起
+        // 装裱面板打开时：目标被取消选中 → 自动收起
         if (framingOpen) {
             val bound = framingPanel.boundItem()
-            if (inCrop || canvas.selected == null || bound == null || canvas.selected !== bound) {
+            if (canvas.selected == null || bound == null || canvas.selected !== bound) {
                 framingOpen = false
                 framingPanel.visibility = View.GONE
             }
         }
-        cropBar.visibility = if (inCrop) View.VISIBLE else View.GONE
         framingPanel.visibility = if (framingOpen) View.VISIBLE else View.GONE
         selectionBar.visibility =
-            if (!inCrop && !drawMode && !framingOpen && canvas.selected != null)
+            if (!drawMode && !framingOpen && canvas.selected != null)
                 View.VISIBLE else View.GONE
         if (canvas.selected != null) {
             val it = canvas.selected!!

@@ -39,7 +39,6 @@ class PageCanvas @JvmOverloads constructor(
 
     var onSelectionChanged: ((Item?) -> Unit)? = null
     var onModified: (() -> Unit)? = null
-    var onOpenCrop: ((Item) -> Unit)? = null
     var onFlip: ((Int) -> Unit)? = null          // -1 上一跨页 / +1 下一跨页
     var onSpanResult: ((Boolean) -> Unit)? = null
     /** 双击文字：请求编辑（Activity 打开文字对话框） */
@@ -80,18 +79,6 @@ class PageCanvas @JvmOverloads constructor(
     private var guideV = -1f
     private var guideH = -1f
 
-    // 裁切
-    var cropItem: Item? = null
-        private set
-    private var cropBmp: Bitmap? = null
-    private var cropRect = RectF()
-    private var cropTempZoom = 1f
-    private var cropTempCx = 0.5f
-    private var cropTempCy = 0.5f
-    private var cropLastX = 0f
-    private var cropLastY = 0f
-    private var cropPinchDist = 0f
-    var onCropChanged: (() -> Unit)? = null
 
     // 空白滑动翻页
     private var emptyDownX = 0f
@@ -179,22 +166,18 @@ class PageCanvas @JvmOverloads constructor(
         override fun onDown(e: MotionEvent): Boolean = true
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            if (cropItem != null) return true
             select(hitItem(e.x, e.y))
             return true
         }
 
         override fun onDoubleTap(e: MotionEvent): Boolean {
-            if (cropItem != null) return true
             val it = hitItem(e.x, e.y)
             if (it == null) { resetView(); return true }   // 双击空白：复位缩放
-            if (it.type == Item.TYPE_PHOTO && it.imgId != null) onOpenCrop?.invoke(it)
             if (it.type == Item.TYPE_TEXT) onEditText?.invoke(it)
             return true
         }
 
         override fun onLongPress(e: MotionEvent) {
-            if (cropItem != null) return
             val it = hitItem(e.x, e.y) ?: return
             val owner = pageOf(it) ?: return
             val idx = owner.items.indexOf(it)
@@ -231,32 +214,6 @@ class PageCanvas @JvmOverloads constructor(
         invalidate()
     }
 
-    fun exitCrop(apply: Boolean) {
-        val it = cropItem ?: return
-        if (apply) {
-            it.cropZoom = cropTempZoom
-            it.cropCx = cropTempCx
-            it.cropCy = cropTempCy
-            onModified?.invoke()
-        }
-        cropItem = null
-        cropBmp = null
-        invalidate()
-    }
-
-    fun enterCrop(item: Item) {
-        resetView()   // 裁切在 1 倍视图下进行
-        cropItem = item
-        cropRect.setEmpty()
-        cropBmp = item.imgId?.let { com.yussy.folior.store.Store.decodeFull(context, it, 2048) }
-        cropTempZoom = item.cropZoom
-        cropTempCx = item.cropCx
-        cropTempCy = item.cropCy
-        selected = null
-        onSelectionChanged?.invoke(null)
-        invalidate()
-    }
-
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         layoutSlots()
@@ -264,7 +221,6 @@ class PageCanvas @JvmOverloads constructor(
 
     /** 重新计算页位（尺寸/方向/跨页模式变化时调用） */
     fun invalidateLayout() {
-        cropRect.setEmpty()
         resetView()   // 方向/模式变化时复位缩放
         layoutSlots()
         invalidate()
@@ -352,7 +308,7 @@ class PageCanvas @JvmOverloads constructor(
                         it.x + it.w > 1.001f || it.y + it.h > 1.001f
                 } == true
             }
-            if (hasOverflow && cropItem == null) {
+            if (hasOverflow) {
                 val ghostArea = RectF(union)
                 val mx = union.width() * 0.45f
                 val my = union.height() * 0.45f
@@ -387,8 +343,6 @@ class PageCanvas @JvmOverloads constructor(
                 canvas.restore()
             }
         }
-
-        if (cropItem != null) { canvas.restore(); drawCropMode(canvas); return }
 
         // 展览：工作区边缘实际尺寸标尺（单位：米）
         if (p.type == Project.TYPE_EXHIBITION && slots.isNotEmpty()) {
@@ -520,47 +474,10 @@ class PageCanvas @JvmOverloads constructor(
         }
     }
 
-    private fun drawCropMode(canvas: Canvas) {
-        val it = cropItem ?: return
-        val bmp = cropBmp ?: return
-        canvas.drawColor(0xE6111110.toInt())
-        if (cropRect.isEmpty) {
-            val aspect = it.w / it.h
-            var w = width * 0.8f
-            var h = w / aspect
-            if (h > height * 0.66f) { h = height * 0.66f; w = h * aspect }
-            cropRect = RectF((width - w) / 2f, (height - h) / 2f - 30f,
-                (width + w) / 2f, (height + h) / 2f - 30f)
-        }
-        PageRenderer.drawCroppedBitmap(canvas, bmp,
-            Item(cropZoom = cropTempZoom, cropCx = cropTempCx, cropCy = cropTempCy),
-            cropRect.left, cropRect.top, cropRect.width(), cropRect.height())
-        val gp = Paint(Paint.ANTI_ALIAS_FLAG)
-        gp.color = 0x60FFFFFF.toInt()
-        gp.strokeWidth = 1f
-        for (i in 1..2) {
-            canvas.drawLine(cropRect.left + cropRect.width() * i / 3f, cropRect.top,
-                cropRect.left + cropRect.width() * i / 3f, cropRect.bottom, gp)
-            canvas.drawLine(cropRect.left, cropRect.top + cropRect.height() * i / 3f,
-                cropRect.right, cropRect.top + cropRect.height() * i / 3f, gp)
-        }
-        val bp = Paint(Paint.ANTI_ALIAS_FLAG)
-        bp.style = Paint.Style.STROKE
-        bp.color = 0xFFFFFFFF.toInt()
-        bp.strokeWidth = 2.5f
-        canvas.drawRect(cropRect, bp)
-        val tp = Paint(Paint.ANTI_ALIAS_FLAG)
-        tp.color = 0xCCFFFFFF.toInt()
-        tp.textSize = 28f
-        tp.textAlign = Paint.Align.CENTER
-        canvas.drawText("单指移动 · 双指缩放 · 双击完成", width / 2f, cropRect.bottom + 52f, tp)
-    }
-
     // ---------------- 触摸 ----------------
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(ev: MotionEvent): Boolean {
-        if (cropItem != null) return cropTouch(ev)
 
         // 工作区双指缩放：未选中、非绘制模式时用【原始视图坐标】直接处理。
         // 不能走 contentEvent（内容坐标）—— 其换算分母是正在变化的 viewScale，
@@ -810,46 +727,6 @@ class PageCanvas @JvmOverloads constructor(
         val t = if (len2 < 1e-8f) 0f
         else (((px - ax) * dx + (py - ay) * dy) / len2).coerceIn(0f, 1f)
         return hypot(px - (ax + t * dx), py - (ay + t * dy))
-    }
-
-    private fun cropTouch(ev: MotionEvent): Boolean {
-        val it = cropItem ?: return false
-        val bmp = cropBmp ?: return false
-        when (ev.actionMasked) {
-            MotionEvent.ACTION_POINTER_DOWN -> if (ev.pointerCount == 2) cropPinchDist = dist(ev)
-            MotionEvent.ACTION_MOVE -> {
-                if (ev.pointerCount >= 2) {
-                    val d = dist(ev)
-                    if (cropPinchDist > 0) {
-                        cropTempZoom = (cropTempZoom * (d / cropPinchDist)).coerceIn(1f, 12f)
-                        it.cropZoom = cropTempZoom
-                        clampCrop(it, bmp)
-                        invalidate(); onCropChanged?.invoke()
-                    }
-                    cropPinchDist = d
-                } else {
-                    val base = Math.max(cropRect.width() / bmp.width, cropRect.height() / bmp.height) * it.cropZoom
-                    cropTempCx -= (ev.x - cropLastX) / (bmp.width * base)
-                    cropTempCy -= (ev.y - cropLastY) / (bmp.height * base)
-                    it.cropZoom = cropTempZoom
-                    clampCrop(it, bmp)
-                    invalidate(); onCropChanged?.invoke()
-                    cropLastX = ev.x; cropLastY = ev.y
-                }
-            }
-            MotionEvent.ACTION_DOWN -> { cropLastX = ev.x; cropLastY = ev.y }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> cropPinchDist = 0f
-        }
-        return true
-    }
-
-    private fun clampCrop(it: Item, bmp: Bitmap) {
-        val baseScale = Math.max(cropRect.width() / bmp.width, cropRect.height() / bmp.height)
-        val coverWn = 1f / it.cropZoom
-        val coverHn = (baseScale * bmp.height / cropRect.height()) / it.cropZoom
-        cropTempCx = cropTempCx.coerceIn(coverWn / 2f, 1f - coverWn / 2f)
-        cropTempCy = cropTempCy.coerceIn(coverHn / 2f, 1f - coverHn / 2f)
-        it.cropCx = cropTempCx; it.cropCy = cropTempCy
     }
 
     private fun editTouch(ev: MotionEvent, rawX: Float, rawY: Float): Boolean {
