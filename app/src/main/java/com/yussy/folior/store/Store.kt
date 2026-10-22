@@ -58,12 +58,35 @@ object Store {
             if (opts.outWidth <= 0 || opts.outHeight <= 0) return null
             var sample = 1
             while (Math.max(opts.outWidth, opts.outHeight) / (sample * 2) >= maxDim) sample *= 2
-            // 2) 读取 EXIF 方向
+            // 2) 读取 EXIF 方向 + 分辨率（PPI）
             var orientation = ExifInterface.ORIENTATION_NORMAL
+            var ppi = 300f
             try {
                 cr.openInputStream(uri)?.use { ins ->
-                    orientation = ExifInterface(ins).getAttributeInt(
+                    val exif = ExifInterface(ins)
+                    orientation = exif.getAttributeInt(
                         ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+                    // X/Y_RESOLUTION 形如 "72/1"（有理数）
+                    val xRes = exif.getAttribute(ExifInterface.TAG_X_RESOLUTION)
+                    val unit = exif.getAttributeInt(
+                        ExifInterface.TAG_RESOLUTION_UNIT, ExifInterface.RESOLUTION_UNIT_INCHES.toInt())
+                    if (xRes != null) {
+                        val v = xRes.split("/").let { p ->
+                            p[0].toFloatOrNull()?.let { num ->
+                                if (p.size > 1) p[1].toFloatOrNull()?.let { den ->
+                                    if (den != 0f) num / den else null
+                                } ?: num else num
+                            }
+                        }
+                        if (v != null && v > 0f) {
+                            ppi = when (unit) {
+                                ExifInterface.RESOLUTION_UNIT_CENTIMETERS.toInt() -> v * 2.54f
+                                else -> v   // 英寸或无单位，按英寸处理
+                            }
+                        }
+                    }
+                    // 合理性钳制（异常元数据兜底）
+                    if (ppi < 1f || ppi > 4000f) ppi = 300f
                 }
             } catch (_: Exception) {}
             // 3) 真正解码
@@ -77,6 +100,7 @@ object Store {
             }
             if (upright !== bmp) upright.recycle()
             bmp.recycle()
+            putPhotoMeta(c, id, opts.outWidth, opts.outHeight, ppi)
             id
         } catch (e: Exception) { null }
     }
@@ -105,6 +129,55 @@ object Store {
             if (f.exists()) return f
         }
         return null
+    }
+
+    // ---------- 照片物理元数据（原始像素 × PPI） ----------
+
+    private var metaCache: MutableMap<String, org.json.JSONObject>? = null
+
+    private fun metaFile(c: Context): File = File(imagesDir(c), "meta.json")
+
+    @Synchronized
+    private fun loadMeta(c: Context): MutableMap<String, org.json.JSONObject> {
+        metaCache?.let { return it }
+        val m = mutableMapOf<String, org.json.JSONObject>()
+        val f = metaFile(c)
+        if (f.exists()) {
+            try {
+                val o = org.json.JSONObject(f.readText())
+                o.keys().forEach { k -> m[k] = o.getJSONObject(k) }
+            } catch (_: Exception) {}
+        }
+        metaCache = m
+        return m
+    }
+
+    @Synchronized
+    private fun saveMeta(c: Context) {
+        val m = metaCache ?: return
+        try {
+            val o = org.json.JSONObject()
+            m.forEach { (k, v) -> o.put(k, v) }
+            metaFile(c).writeText(o.toString())
+        } catch (_: Exception) {}
+    }
+
+    fun putPhotoMeta(c: Context, imgId: String, origW: Int, origH: Int, ppi: Float) {
+        val m = loadMeta(c)
+        m[imgId] = org.json.JSONObject()
+            .put("w", origW).put("h", origH).put("ppi", ppi.toDouble())
+        saveMeta(c)
+    }
+
+    /** 返回 (原始宽px, 原始高px, PPI)；无记录时回退为文件尺寸 + 300ppi */
+    fun photoMeta(c: Context, imgId: String): Triple<Int, Int, Float> {
+        loadMeta(c)[imgId]?.let {
+            return Triple(it.optInt("w"), it.optInt("h"), it.optDouble("ppi", 300.0).toFloat())
+        }
+        val f = imageFile(c, imgId) ?: return Triple(0, 0, 300f)
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(f.absolutePath, opts)
+        return Triple(opts.outWidth, opts.outHeight, 300f)
     }
 
     // 内存缩略图缓存
@@ -159,6 +232,12 @@ object Store {
                     f.inputStream().use { it.copyTo(zos) }
                     zos.closeEntry()
                 }
+                val meta = File(imagesDir(c), "meta.json")
+                if (meta.exists()) {
+                    zos.putNextEntry(ZipEntry("images/meta.json"))
+                    meta.inputStream().use { it.copyTo(zos) }
+                    zos.closeEntry()
+                }
             }
             true
         } catch (e: Exception) { false }
@@ -186,6 +265,7 @@ object Store {
             if (projectJson == null) {
                 tmpImgs.forEach { it.first.delete() }; return null
             }
+            metaCache = null   // 重载元数据（meta.json 可能随包导入）
             // imgId 冲突处理：简单起见直接使用（UUID 冲突概率极低）
             Project.fromJson(JSONObject(projectJson!!)).also { save(c, it) }
         } catch (e: Exception) { null }

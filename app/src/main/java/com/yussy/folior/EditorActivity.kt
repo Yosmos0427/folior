@@ -424,6 +424,24 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
+    /** 展览：修改当前墙尺寸（米制）。 */
+    private fun wallSettings() {
+        val pg = page()
+        showWall(this, "墙体尺寸", pg.widthMm(project), pg.heightMm(project),
+            presets = listOf(
+                Triple("3×2m", 3000f, 2000f),
+                Triple("3×3m", 3000f, 3000f),
+                Triple("4×3m", 4000f, 3000f),
+                Triple("6×3m", 6000f, 3000f))) { w, h ->
+            pg.wmm = w; pg.hmm = h
+            canvas.invalidateLayout()
+            strip.refresh()
+            scheduleSave()
+            Toast.makeText(this, "墙体已改为 ${w / 1000f}×${h / 1000f} m",
+                Toast.LENGTH_SHORT).show()
+        }
+    }
+
     /** 修改当前页尺寸（仅摄影书）。 */
     private fun pageSettings() {
         val pg = page()
@@ -438,14 +456,24 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
-    /** 展览：照片按实际尺寸摆上墙（默认长边 40cm，可后续修改）。 */
+    /** 展览：照片按实际尺寸摆上墙 —— 实际尺寸 = 原始像素 ÷ PPI（EXIF，缺省 300）。 */
     private fun placeOnWall(imgId: String, wall: Page, order: Int): Item {
-        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(Store.imageFile(this, imgId)?.absolutePath, opts)
-        val aspect = if (opts.outWidth > 0 && opts.outHeight > 0)
-            opts.outWidth.toFloat() / opts.outHeight else 1.5f
-        val printW = if (aspect >= 1f) 400f else 400f * aspect   // mm，长边 40cm
-        val printH = printW / aspect
+        val (pxW, pxH, ppi) = Store.photoMeta(this, imgId)
+        var printW: Float
+        var printH: Float
+        if (pxW > 0 && pxH > 0) {
+            // 像素 / PPI = 英寸 → mm
+            printW = pxW / ppi * 25.4f
+            printH = pxH / ppi * 25.4f
+            // 兜底：极端元数据时限制在 5cm – 5m 之间
+            val longSide = Math.max(printW, printH).coerceIn(50f, 5000f)
+            val k = longSide / Math.max(printW, printH)
+            printW *= k; printH *= k
+        } else {
+            val aspect = 1.5f
+            printW = if (aspect >= 1f) 400f else 400f * aspect
+            printH = printW / aspect
+        }
         val ww = wall.widthMm(project); val wh = wall.heightMm(project)
         val w = (printW / ww).coerceIn(0.005f, 1f)
         val h = (printH / wh).coerceIn(0.005f, 1f)
@@ -581,7 +609,10 @@ class EditorActivity : AppCompatActivity() {
     private fun showMenu() {
         val actions = mutableListOf<Pair<String, () -> Unit>>(
             "项目设置" to { projectSettings() })
-        if (project.type != Project.TYPE_EXHIBITION) actions.add("页面设置" to { pageSettings() })
+        if (project.type == Project.TYPE_EXHIBITION)
+            actions.add("墙体设置" to { wallSettings() })
+        else
+            actions.add("页面设置" to { pageSettings() })
         actions.add("导出 PDF" to { exportPdf() })
         actions.add("导出工程文件 (.folio)" to { exportBundle() })
         AlertDialog.Builder(this)
