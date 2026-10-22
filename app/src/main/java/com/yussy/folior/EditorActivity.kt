@@ -145,6 +145,17 @@ class EditorActivity : AppCompatActivity() {
             setOnClickListener { action() }
             selRow.addView(this)
         }
+        // 删除放第一位：任何选中态都立即可见（红色 = 破坏性操作）
+        selBtn("删除") {
+            val it = selected() ?: return@selBtn
+            AlertDialog.Builder(this).setTitle("删除该元素？")
+                .setPositiveButton("删除") { _, _ ->
+                    (pageOfItem(it) ?: page()).items.remove(it)
+                    canvas.select(null)
+                    canvas.invalidate()
+                    scheduleSave()
+                }.setNegativeButton("取消", null).show()
+        }.setTextColor(0xFFB5442A.toInt())
         selBtn("裁剪") { selected()?.let { if (it.type == Item.TYPE_PHOTO && it.imgId != null) canvas.enterCrop(it) } }
         selBtn("装裱") {
             val it = selected() ?: return@selBtn
@@ -174,7 +185,6 @@ class EditorActivity : AppCompatActivity() {
             if (!canvas.spanSelected())
                 Toast.makeText(this, "需横屏并同时显示左右两页", Toast.LENGTH_SHORT).show()
         }
-        selBtn("删除") { deleteSelected() }
         selectionBar.addView(selRow)
         root.addView(selectionBar)
 
@@ -586,10 +596,10 @@ class EditorActivity : AppCompatActivity() {
             (selectionBar.getChildAt(0) as LinearLayout).let { row ->
                 val isPhoto = it.type == Item.TYPE_PHOTO
                 val isExh = project.type == Project.TYPE_EXHIBITION
-                (row.getChildAt(0) as TextView).visibility = if (isPhoto) View.VISIBLE else View.GONE
                 (row.getChildAt(1) as TextView).visibility = if (isPhoto) View.VISIBLE else View.GONE
-                (row.getChildAt(2) as TextView).visibility = if (isPhoto && isExh) View.VISIBLE else View.GONE
-                (row.getChildAt(3) as TextView).visibility = if (isPhoto) View.GONE else View.VISIBLE
+                (row.getChildAt(2) as TextView).visibility = if (isPhoto) View.VISIBLE else View.GONE
+                (row.getChildAt(3) as TextView).visibility = if (isPhoto && isExh) View.VISIBLE else View.GONE
+                (row.getChildAt(4) as TextView).visibility = if (isPhoto) View.GONE else View.VISIBLE
             }
         }
     }
@@ -858,17 +868,6 @@ class EditorActivity : AppCompatActivity() {
         val idx = items.indexOf(it)
         if (idx > 0) { items.removeAt(idx); items.add(idx - 1, it) }
         canvas.invalidate(); scheduleSave()
-    }
-
-    private fun deleteSelected() {
-        val it = selected() ?: return
-        AlertDialog.Builder(this).setTitle("删除该元素？")
-            .setPositiveButton("删除") { _, _ ->
-                (pageOfItem(it) ?: page()).items.remove(it)
-                canvas.select(null)
-                canvas.invalidate()
-                scheduleSave()
-            }.setNegativeButton("取消", null).show()
     }
 
     // ---------- 导出 ----------
