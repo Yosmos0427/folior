@@ -10,7 +10,6 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -28,7 +27,7 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var canvas: PageCanvas
     private lateinit var strip: PageStrip
     private lateinit var pageLabel: TextView
-    private lateinit var selectionBar: HorizontalScrollView
+    private lateinit var selectionBar: LinearLayout
     private lateinit var cropBar: LinearLayout
     private lateinit var bodyRow: LinearLayout
     private lateinit var canvasWrap: android.widget.FrameLayout
@@ -127,24 +126,32 @@ class EditorActivity : AppCompatActivity() {
         bodyRow.addView(canvasWrap)
         root.addView(bodyRow)
 
-        // ---- 选择工具栏 ----
-        selectionBar = HorizontalScrollView(this).apply {
+        // ---- 选择工具栏（固定两行，全部功能直接可见） ----
+        selectionBar = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            isHorizontalScrollBarEnabled = false
         }
-        val selRow = LinearLayout(this).apply {
+        val selRow1 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
+            gravity = Gravity.CENTER
+            setPadding(dp(4f), dp(4f), dp(4f), 0)
         }
+        val selRow2 = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(4f), 0, dp(4f), dp(4f))
+        }
+        // 按钮所在行：第一行放编辑类操作，第二行放排版类操作
+        var selTarget: LinearLayout = selRow1
         fun selBtn(text: String, action: () -> Unit) = TextView(this).apply {
             this.text = text
             textSize = 13f
             setTextColor(0xFF1A1A18.toInt())
             setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
             setOnClickListener { action() }
-            selRow.addView(this)
+            selTarget.addView(this)
         }
+        fun switchRow(row: LinearLayout) { selTarget = row }
         // 删除放第一位：任何选中态都立即可见（红色 = 破坏性操作）
         selBtn("删除") {
             val it = selected() ?: return@selBtn
@@ -177,6 +184,7 @@ class EditorActivity : AppCompatActivity() {
             editPhotoPrintSize(it)
         }
         selBtn("编辑") { editSelected() }
+        switchRow(selRow2)
         selBtn("复制") { duplicateSelected() }
         selBtn("置顶") { bringTop() }
         selBtn("下移") { sendBack() }
@@ -185,7 +193,8 @@ class EditorActivity : AppCompatActivity() {
             if (!canvas.spanSelected())
                 Toast.makeText(this, "需横屏并同时显示左右两页", Toast.LENGTH_SHORT).show()
         }
-        selectionBar.addView(selRow)
+        selectionBar.addView(selRow1)
+        selectionBar.addView(selRow2)
         root.addView(selectionBar)
 
         // ---- 裁切确认栏 ----
@@ -601,6 +610,7 @@ class EditorActivity : AppCompatActivity() {
                 (row.getChildAt(3) as TextView).visibility = if (isPhoto && isExh) View.VISIBLE else View.GONE
                 (row.getChildAt(4) as TextView).visibility = if (isPhoto) View.GONE else View.VISIBLE
             }
+            // 第二行（复制/置顶/下移/转90°/跨页）全部常显，无需处理
         }
     }
 
