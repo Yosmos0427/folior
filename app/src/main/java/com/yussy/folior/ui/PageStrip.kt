@@ -50,7 +50,11 @@ class PageStrip @JvmOverloads constructor(
     /** 工作区拖照片悬停的目标格（高亮），-1 = 无 */
     private var dragTargetPos = -1
 
-    private val thumbCache = HashMap<String, android.graphics.Bitmap>()
+    // 缩略图缓存：访问序 LRU，上限 40 条（页面很多时不再无界增长）
+    private val thumbCache = object : LinkedHashMap<String, android.graphics.Bitmap>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, android.graphics.Bitmap>) =
+            size > 40
+    }
     private var availW = 0
     private var availH = 0
 

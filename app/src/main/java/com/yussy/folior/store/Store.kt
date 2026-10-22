@@ -38,8 +38,18 @@ object Store {
         return list
     }
 
+    /** 原子写入：先写临时文件再重命名，中途崩溃不会损坏已有工程 */
     fun save(c: Context, p: Project) {
-        File(projectsDir(c), p.id + ".folio").writeText(p.toJson().toString())
+        try {
+            val target = File(projectsDir(c), p.id + ".folio")
+            val tmp = File(projectsDir(c), p.id + ".tmp")
+            tmp.writeText(p.toJson().toString())
+            if (!tmp.renameTo(target)) {
+                // 个别文件系统 rename 失败：回退直写
+                target.writeText(p.toJson().toString())
+                tmp.delete()
+            }
+        } catch (_: Exception) {}
     }
 
     fun delete(c: Context, id: String) {
@@ -182,41 +192,36 @@ object Store {
         return Triple(opts.outWidth, opts.outHeight, 300f)
     }
 
-    // 内存缩略图缓存
-    private val memCache = object : LruCache<String, Bitmap>(64) {
-        override fun sizeOf(key: String, value: Bitmap) = 1
+    // 内存位图缓存：按字节计量（48MB 上限），整图与缩略图共用；
+    // 此前按"张数(64)"计量，大量大图时可能堆爆。
+    private val memCache = object : LruCache<String, Bitmap>(48 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = value.byteCount.coerceAtLeast(1)
     }
 
-    /** 解码整图（带下采样），用于画布渲染与 PDF 导出。 */
-    fun decodeFull(c: Context, imgId: String, maxDim: Int = 2048): Bitmap? {
-        val key = "$imgId@$maxDim"
-        memCache.get(key)?.let { return it }
-        val f = imageFile(c, imgId) ?: return null
-        return try {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(f.absolutePath, bounds)
-            var sample = 1
-            while (bounds.outWidth / (sample * 2) >= maxDim || bounds.outHeight / (sample * 2) >= maxDim) sample *= 2
-            val bmp = BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
-            if (bmp != null) memCache.put(key, bmp)
-            bmp
-        } catch (e: Exception) { null }
-    }
+    /** 通用下采样解码（先读尺寸算 sample，再真正解码）。 */
+    private fun decodeSampled(f: File, maxDim: Int): Bitmap? = try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(f.absolutePath, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= maxDim || bounds.outHeight / (sample * 2) >= maxDim) sample *= 2
+        BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
+    } catch (e: Exception) { null }
 
-    /** 解码缩略图，用于页面条。 */
-    fun decodeThumb(c: Context, imgId: String, maxDim: Int = 320): Bitmap? {
-        val key = "t$imgId@$maxDim"
+    /** 解码整图（带缓存与下采样），用于画布渲染与 PDF 导出。 */
+    fun decodeFull(c: Context, imgId: String, maxDim: Int = 2048): Bitmap? =
+        decodeCached(c, imgId, maxDim)
+
+    /** 解码缩略图（独立 key 空间），用于页面条。 */
+    fun decodeThumb(c: Context, imgId: String, maxDim: Int = 320): Bitmap? =
+        decodeCached(c, imgId, maxDim, prefix = "t")
+
+    private fun decodeCached(c: Context, imgId: String, maxDim: Int, prefix: String = ""): Bitmap? {
+        val key = "$prefix$imgId@$maxDim"
         memCache.get(key)?.let { return it }
         val f = imageFile(c, imgId) ?: return null
-        return try {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(f.absolutePath, bounds)
-            var sample = 1
-            while (bounds.outWidth / (sample * 2) >= maxDim || bounds.outHeight / (sample * 2) >= maxDim) sample *= 2
-            val bmp = BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
-            if (bmp != null) memCache.put(key, bmp)
-            bmp
-        } catch (e: Exception) { null }
+        val bmp = decodeSampled(f, maxDim) ?: return null
+        memCache.put(key, bmp)
+        return bmp
     }
 
     // ---------- .folio 包（zip）导出 / 导入 ----------
