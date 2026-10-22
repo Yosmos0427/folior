@@ -99,35 +99,16 @@ object PageRenderer {
                     canvas.restore()
                     return
                 }
-                val frame = item.frameStyle
-                if (isExhibition || frame != null) drawShadow(canvas, fl, fT, fw, fh, 18f)
-                when (frame) {
-                    "mat" -> {
-                        // 卡纸装裱：四周留白衬纸
-                        val m = Math.min(fw, fh) * 0.055f
-                        p.style = Paint.Style.FILL
-                        p.color = 0xFFFDFCF8.toInt()
-                        canvas.drawRect(fl - m, fT - m, fl + fw + m, fT + fh + m, p)
-                    }
-                    "frame" -> {
-                        // 木框装裱
-                        val t = Math.min(fw, fh) * 0.03f
-                        p.style = Paint.Style.FILL
-                        p.color = 0xFF2B2A26.toInt()
-                        canvas.drawRect(fl - t, fT - t, fl + fw + t, fT + fh + t, p)
-                    }
-                }
+                // 统一装裱：投影按装裱外沿，边框围在衬材外围（衬材可自定义比例）
+                val fr = computeFraming(item, fl, fT, fw, fh)
+                if (isExhibition || fr != null)
+                    drawShadow(canvas, fr?.outerL ?: fl, fr?.outerT ?: fT,
+                        fr?.outerW ?: fw, fr?.outerH ?: fh, 18f)
+                fr?.let { drawFraming(canvas, it) }
                 canvas.save()
                 canvas.clipRect(fl, fT, fl + fw, fT + fh)
                 drawCroppedBitmap(canvas, bmp, item, fl, fT, fw, fh, highQuality)
                 canvas.restore()
-                if (frame != null) {
-                    // 装裱内侧细边线
-                    p.style = Paint.Style.STROKE
-                    p.strokeWidth = Math.max(1f, Math.min(fw, fh) * 0.004f)
-                    p.color = 0x2E000000
-                    canvas.drawRect(fl, fT, fl + fw, fT + fh, p)
-                }
                 if (item.frameStroke) {
                     p.style = Paint.Style.STROKE
                     p.strokeWidth = Math.max(1f, wPx * 0.0015f)
@@ -136,8 +117,8 @@ object PageRenderer {
                 }
             }
             Item.TYPE_TEXT -> {
-                // 背景材质（在文字之下）
-                item.textBg?.let { bg -> drawTextBg(canvas, bg, fl, fT, fw, fh) }
+                // 装裱（与照片同一套衬材/边框系统）
+                computeFraming(item, fl, fT, fw, fh)?.let { drawFraming(canvas, it) }
                 val tp = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.LINEAR_TEXT_FLAG)
                 tp.color = parseColor(item.color, Color.BLACK)
                 tp.textSize = item.fontScale * hPx
@@ -214,64 +195,125 @@ object PageRenderer {
         canvas.restore()
     }
 
-    /** 文字背景材质：纸张 / 金属 / 木板 / 亚克力。 */
-    private fun drawTextBg(canvas: android.graphics.Canvas, kind: String,
-                           l: Float, t: Float, w: Float, h: Float) {
-        val p = Paint(Paint.ANTI_ALIAS_FLAG)
-        val r = Math.min(w, h) * 0.06f
-        val rect = RectF(l, t, l + w, t + h)
-        when (kind) {
-            "paper" -> {
-                p.color = 0xFFF7F4EC.toInt()
-                canvas.drawRoundRect(rect, r, r, p)
-                p.style = Paint.Style.STROKE
-                p.strokeWidth = Math.max(1f, Math.min(w, h) * 0.006f)
-                p.color = 0x26000000
-                canvas.drawRoundRect(rect, r, r, p)
+    // ---------------- 统一装裱（照片与文字共用） ----------------
+
+    class Framing(
+        val matStyle: String?, val matColor: String?,
+        val frameStyle: String?, val frameColor: String?,
+        val matRect: RectF, val frameRect: RectF,
+        val outerL: Float, val outerT: Float, val outerW: Float, val outerH: Float
+    )
+
+    private val matDefaultColor = mapOf(
+        "paper" to "#F7F4EC", "wood" to "#9A6B44",
+        "metal" to "#C9CBD3", "acrylic" to "#FFFFFF"
+    )
+
+    /**
+     * 计算装裱几何：衬材在内容外延 matPad（可锁定比例），
+     * 边框宽度按 min(衬宽,衬高) 比例围在衬材外围。
+     */
+    fun computeFraming(item: Item, fl: Float, fT: Float, fw: Float, fh: Float): Framing? {
+        val hasMat = item.matStyle != null
+        val hasFrame = item.frameStyle != null
+        if (!hasMat && !hasFrame) return null
+        var l = fl; var t = fT; var r = fl + fw; var b = fT + fh
+        if (hasMat) {
+            val pad = item.matPad * Math.min(fw, fh)
+            l -= pad; t -= pad; r += pad; b += pad
+            if (item.matRatio > 0.01f) {
+                // 锁定衬材比例：以覆盖内容为原则扩展（居中）
+                val cw = r - l; val ch = b - t
+                if (cw / ch > item.matRatio) {
+                    val nh = cw / item.matRatio
+                    t -= (nh - ch) / 2f; b += (nh - ch) / 2f
+                } else {
+                    val nw = ch * item.matRatio
+                    l -= (nw - cw) / 2f; r += (nw - cw) / 2f
+                }
             }
+        }
+        val matRect = RectF(l, t, r, b)
+        val fwid = if (hasFrame) item.frameW * Math.min(r - l, b - t) else 0f
+        val frameRect = RectF(l - fwid, t - fwid, r + fwid, b + fwid)
+        return Framing(item.matStyle, item.matColor, item.frameStyle, item.frameColor,
+            matRect, frameRect, frameRect.left, frameRect.top,
+            frameRect.width(), frameRect.height())
+    }
+
+    private fun drawFraming(canvas: android.graphics.Canvas, fr: Framing) {
+        val m = Math.min(fr.frameRect.width(), fr.frameRect.height())
+        val radius = m * 0.03f
+        if (fr.frameStyle != null)
+            drawMaterialFill(canvas, fr.frameStyle, fr.frameColor, fr.frameRect, radius)
+        if (fr.matStyle != null)
+            drawMaterialFill(canvas, fr.matStyle, fr.matColor, fr.matRect, radius * 0.7f)
+    }
+
+    /** 材质填充：纸张 / 木板 / 金属 / 亚克力，颜色可覆盖。 */
+    private fun drawMaterialFill(
+        canvas: android.graphics.Canvas, style: String, colorHex: String?,
+        rect: RectF, r: Float
+    ) {
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        val base = parseColor(colorHex ?: (matDefaultColor[style] ?: "#FFFFFF"), Color.WHITE)
+        val hairline = Math.max(1f, Math.min(rect.width(), rect.height()) * 0.005f)
+        when (style) {
             "metal" -> {
                 p.shader = LinearGradient(
-                    l, t, l, t + h,
-                    intArrayOf(0xFFEDEEF2.toInt(), 0xFFC2C4CC.toInt(),
-                               0xFFE4E5EA.toInt(), 0xFFAFB2BC.toInt()),
+                    rect.left, rect.top, rect.left, rect.bottom,
+                    intArrayOf(
+                        androidx.core.graphics.ColorUtils.blendARGB(base, Color.WHITE, 0.30f),
+                        androidx.core.graphics.ColorUtils.blendARGB(base, Color.BLACK, 0.22f),
+                        androidx.core.graphics.ColorUtils.blendARGB(base, Color.WHITE, 0.18f),
+                        androidx.core.graphics.ColorUtils.blendARGB(base, Color.BLACK, 0.28f)),
                     floatArrayOf(0f, 0.45f, 0.55f, 1f), Shader.TileMode.CLAMP)
                 canvas.drawRoundRect(rect, r, r, p)
                 p.shader = null
                 p.style = Paint.Style.STROKE
-                p.strokeWidth = Math.max(1f, Math.min(w, h) * 0.005f)
+                p.strokeWidth = hairline
                 p.color = 0x33000000
                 canvas.drawRoundRect(rect, r, r, p)
             }
             "wood" -> {
                 p.shader = LinearGradient(
-                    l, t, l, t + h,
-                    intArrayOf(0xFF9A6B44.toInt(), 0xFF7C5232.toInt()),
-                    floatArrayOf(0f, 1f), Shader.TileMode.CLAMP)
+                    rect.left, rect.top, rect.left, rect.bottom,
+                    androidx.core.graphics.ColorUtils.blendARGB(base, Color.WHITE, 0.18f),
+                    androidx.core.graphics.ColorUtils.blendARGB(base, Color.BLACK, 0.22f),
+                    Shader.TileMode.CLAMP)
                 canvas.drawRoundRect(rect, r, r, p)
-                // 木纹：数条半透明深色水平细纹
+                p.shader = null
+                // 木纹：数条半透明深色水平细纹（裁切在圆角内）
                 canvas.save()
                 canvas.clipPath(android.graphics.Path().apply {
                     addRoundRect(rect, r, r, android.graphics.Path.Direction.CW)
                 })
                 val grain = Paint(Paint.ANTI_ALIAS_FLAG)
                 grain.color = 0x2E000000
-                grain.strokeWidth = Math.max(1f, h * 0.012f)
-                var y = t + h * 0.18f
+                grain.strokeWidth = Math.max(1f, rect.height() * 0.012f)
+                var y = rect.top + rect.height() * 0.18f
                 var i = 0
-                while (y < t + h) {
-                    canvas.drawLine(l, y, l + w,
-                        y + if (i % 2 == 0) h * 0.02f else -h * 0.02f, grain)
-                    y += h * 0.22f; i++
+                while (y < rect.bottom) {
+                    canvas.drawLine(rect.left, y, rect.right,
+                        y + if (i % 2 == 0) rect.height() * 0.02f else -rect.height() * 0.02f, grain)
+                    y += rect.height() * 0.22f; i++
                 }
                 canvas.restore()
-                p.shader = null
             }
             "acrylic" -> {
-                p.color = 0x59FFFFFF
+                p.color = (base and 0x00FFFFFF) or 0x59000000
                 canvas.drawRoundRect(rect, r, r, p)
                 p.style = Paint.Style.STROKE
-                p.strokeWidth = Math.max(1f, Math.min(w, h) * 0.008f)
+                p.strokeWidth = hairline * 1.5f
                 p.color = 0x8CFFFFFF.toInt()
+                canvas.drawRoundRect(rect, r, r, p)
+            }
+            else -> {  // paper
+                p.color = base
+                canvas.drawRoundRect(rect, r, r, p)
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = hairline
+                p.color = 0x22000000
                 canvas.drawRoundRect(rect, r, r, p)
             }
         }

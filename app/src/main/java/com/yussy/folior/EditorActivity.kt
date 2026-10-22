@@ -174,13 +174,16 @@ class EditorActivity : AppCompatActivity() {
         selBtn("裁剪") { selected()?.let { if (it.type == Item.TYPE_PHOTO && it.imgId != null) canvas.enterCrop(it) } }
         selBtn("装裱") {
             val it = selected() ?: return@selBtn
-            if (it.type != Item.TYPE_PHOTO) return@selBtn
-            it.frameStyle = when (it.frameStyle) {
-                null -> "mat"; "mat" -> "frame"; else -> null
+            if (it.type != Item.TYPE_PHOTO && it.type != Item.TYPE_TEXT) return@selBtn
+            val conf = FrameDialog.Conf(it.matStyle, it.matColor, it.matPad, it.matRatio,
+                it.frameStyle, it.frameColor, it.frameW)
+            FrameDialog.show(this, conf) { c ->
+                it.matStyle = c.matStyle; it.matColor = c.matColor
+                it.matPad = c.matPad; it.matRatio = c.matRatio
+                it.frameStyle = c.frameStyle; it.frameColor = c.frameColor
+                it.frameW = c.frameW
+                canvas.invalidate(); scheduleSave()
             }
-            val name = when (it.frameStyle) { "mat" -> "卡纸"; "frame" -> "木框"; else -> "无" }
-            Toast.makeText(this, "装裱：$name", Toast.LENGTH_SHORT).show()
-            canvas.invalidate(); scheduleSave()
         }
         selBtn("尺寸") {
             val it = selected() ?: return@selBtn
@@ -792,7 +795,8 @@ class EditorActivity : AppCompatActivity() {
                 val isPhoto = it.type == Item.TYPE_PHOTO
                 val isExh = project.type == Project.TYPE_EXHIBITION
                 (row.getChildAt(1) as TextView).visibility = if (isPhoto) View.VISIBLE else View.GONE
-                (row.getChildAt(2) as TextView).visibility = if (isPhoto) View.VISIBLE else View.GONE
+                (row.getChildAt(2) as TextView).visibility =
+                    if (isPhoto || it.type == Item.TYPE_TEXT) View.VISIBLE else View.GONE
                 (row.getChildAt(3) as TextView).visibility = if (isPhoto && isExh) View.VISIBLE else View.GONE
                 (row.getChildAt(4) as TextView).visibility = if (isPhoto) View.GONE else View.VISIBLE
             }
@@ -999,10 +1003,10 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun addText() {
-        TextDialog.show(this, "文字", 0.04f, "#1A1A18", false, false, 0) { text, fs, color, bold, italic, align, textBg ->
+        TextDialog.show(this, "文字", 0.04f, "#1A1A18", false, false, 0) { text, fs, color, bold, italic, align ->
             val item = Item(
                 type = Item.TYPE_TEXT, text = text, fontScale = fs, color = color,
-                bold = bold, italic = italic, align = align, textBg = textBg,
+                bold = bold, italic = italic, align = align,
                 x = 0.2f, y = 0.42f, w = 0.6f, h = fs * 3f + 0.04f
             )
             page().items.add(item)
@@ -1017,9 +1021,9 @@ class EditorActivity : AppCompatActivity() {
     private fun editSelected() {
         val it = selected() ?: return
         when (it.type) {
-            Item.TYPE_TEXT -> TextDialog.show(this, it.text, it.fontScale, it.color, it.bold, it.italic, it.align, it.textBg) { text, fs, color, bold, italic, align, textBg ->
+            Item.TYPE_TEXT -> TextDialog.show(this, it.text, it.fontScale, it.color, it.bold, it.italic, it.align) { text, fs, color, bold, italic, align ->
                 it.text = text; it.fontScale = fs; it.color = color
-                it.bold = bold; it.italic = italic; it.align = align; it.textBg = textBg
+                it.bold = bold; it.italic = italic; it.align = align
                 canvas.invalidate(); scheduleSave()
             }
             Item.TYPE_SHAPE -> {

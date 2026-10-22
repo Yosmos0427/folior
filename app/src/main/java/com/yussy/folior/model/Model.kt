@@ -99,8 +99,15 @@ data class Item(
     var cropCx: Float = 0.5f,        // 裁切中心（图像归一化坐标）
     var cropCy: Float = 0.5f,
     var frameStroke: Boolean = false,
-    /** 简易装裱：null=无 / "mat"=卡纸 / "frame"=木框 */
+    /** 边框材质：null=无 / wood 木 / metal 金属 / acrylic 亚克力（旧值 mat/frame 自动迁移） */
     var frameStyle: String? = null,
+    var frameColor: String? = null,    // 边框颜色覆盖
+    var frameW: Float = 0.02f,         // 边框宽度（min(衬宽,衬高) 比例）
+    /** 背景衬材：null=无 / paper 纸张 / wood 木板 / metal 金属 / acrylic 亚克力 */
+    var matStyle: String? = null,
+    var matColor: String? = null,      // 衬材颜色覆盖
+    var matPad: Float = 0.08f,         // 衬材外延（内容 min(宽,高) 比例）
+    var matRatio: Float = 0f,          // 衬材宽高比，0=跟随内容
     /** 照片实际打印宽度（mm），用于展览墙体按真实比例摆放；null = 未指定 */
     var printMm: Float? = null,
     // text
@@ -111,8 +118,6 @@ data class Item(
     var italic: Boolean = false,
     var align: Int = 0,              // 0 left 1 center 2 right
     var lineHeight: Float = 1.4f,
-    /** 文字背景材质：null=无 / paper 纸张 / metal 金属 / wood 木板 / acrylic 亚克力 */
-    var textBg: String? = null,
     // shape
     var shapeKind: String = "rect",  // rect | line
     var shapeColor: String = "#1A1A18",
@@ -144,6 +149,21 @@ data class Item(
             it.cropCy = o.optDouble("cropCy", 0.5).toFloat()
             it.frameStroke = o.optBoolean("frameStroke", false)
             it.frameStyle = if (o.isNull("frameStyle")) null else o.optString("frameStyle")
+            it.frameColor = if (o.isNull("frameColor")) null else o.optString("frameColor")
+            it.frameW = o.optDouble("frameW", 0.02).toFloat()
+            it.matStyle = if (o.isNull("matStyle")) null else o.optString("matStyle")
+            it.matColor = if (o.isNull("matColor")) null else o.optString("matColor")
+            it.matPad = o.optDouble("matPad", 0.08).toFloat()
+            it.matRatio = o.optDouble("matRatio", 0.0).toFloat()
+            // ---- 旧数据迁移 ----
+            if (it.frameStyle == "mat") {          // 旧卡纸装裱 → 纸张衬材
+                if (it.matStyle == null) it.matStyle = "paper"
+                it.frameStyle = null
+            } else if (it.frameStyle == "frame") { // 旧木框 → 木边框
+                it.frameStyle = "wood"
+            }
+            if (it.matStyle == null && !o.isNull("textBg"))  // 旧文字背景 → 衬材
+                it.matStyle = o.optString("textBg")
             it.printMm = if (o.isNull("printMm")) null else o.optDouble("printMm").toFloat()
             it.text = o.optString("text", "")
             it.fontScale = o.optDouble("fontScale", 0.04).toFloat()
@@ -152,7 +172,6 @@ data class Item(
             it.italic = o.optBoolean("italic", false)
             it.align = o.optInt("align", 0)
             it.lineHeight = o.optDouble("lineHeight", 1.4).toFloat()
-            it.textBg = if (o.isNull("textBg")) null else o.optString("textBg")
             it.shapeKind = o.optString("shapeKind", "rect")
             it.shapeColor = o.optString("shapeColor", "#1A1A18")
             it.strokeColor = o.optString("strokeColor", "#1A1A18")
@@ -177,12 +196,17 @@ data class Item(
         o.put("cropCx", cropCx.toDouble()); o.put("cropCy", cropCy.toDouble())
         o.put("frameStroke", frameStroke)
         o.put("frameStyle", frameStyle ?: JSONObject.NULL)
+        o.put("frameColor", frameColor ?: JSONObject.NULL)
+        o.put("frameW", frameW.toDouble())
+        o.put("matStyle", matStyle ?: JSONObject.NULL)
+        o.put("matColor", matColor ?: JSONObject.NULL)
+        o.put("matPad", matPad.toDouble())
+        o.put("matRatio", matRatio.toDouble())
         o.put("printMm", printMm ?: JSONObject.NULL)
         o.put("text", text)
         o.put("fontScale", fontScale.toDouble())
         o.put("color", color); o.put("bold", bold); o.put("italic", italic)
         o.put("align", align); o.put("lineHeight", lineHeight.toDouble())
-        o.put("textBg", textBg ?: JSONObject.NULL)
         o.put("shapeKind", shapeKind); o.put("shapeColor", shapeColor)
         o.put("strokeColor", strokeColor); o.put("strokeW", strokeW.toDouble())
         o.put("strokeAlpha", strokeAlpha.toDouble()); o.put("strokeMarker", strokeMarker)
