@@ -37,6 +37,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(buildUi())
         load()
+        // 启动时后台清理孤儿图片（不阻塞列表显示）
+        Thread { Store.gcImages(this) }.start()
     }
 
     override fun onResume() {
@@ -199,7 +201,11 @@ class MainActivity : AppCompatActivity() {
                             1 -> exportProjectFile(p)
                             2 -> AlertDialog.Builder(this@MainActivity)
                                 .setTitle("删除「${p.title}」？")
-                                .setPositiveButton("删除") { _, _ -> Store.delete(this@MainActivity, p.id); load() }
+                                .setPositiveButton("删除") { _, _ ->
+                                    Store.delete(this@MainActivity, p.id)
+                                    Thread { Store.gcImages(this@MainActivity) }.start()
+                                    load()
+                                }
                                 .setNegativeButton("取消", null).show()
                         }
                     }.show()

@@ -29,10 +29,24 @@ object Store {
 
     // ---------- 项目 CRUD ----------
 
+    // 项目解析缓存：id → (文件mtime, Project)。mtime 未变直接复用，首页不再反复全量解析。
+    private val parseCache = HashMap<String, Pair<Long, Project>>()
+
     fun listProjects(c: Context): MutableList<Project> {
         val list = mutableListOf<Project>()
         projectsDir(c).listFiles { f -> f.name.endsWith(".folio") }?.forEach { f ->
-            try { list.add(Project.fromJson(JSONObject(f.readText()))) } catch (_: Exception) {}
+            val id = f.name.removeSuffix(".folio")
+            val mtime = f.lastModified()
+            val cached = parseCache[id]
+            if (cached != null && cached.first == mtime) {
+                list.add(cached.second)
+                return@forEach
+            }
+            try {
+                val p = Project.fromJson(JSONObject(f.readText()))
+                parseCache[id] = mtime to p
+                list.add(p)
+            } catch (_: Exception) {}
         }
         list.sortByDescending { File(projectsDir(c), it.id + ".folio").lastModified() }
         return list
@@ -54,6 +68,37 @@ object Store {
 
     fun delete(c: Context, id: String) {
         File(projectsDir(c), "$id.folio").delete()
+        parseCache.remove(id)
+    }
+
+    /**
+     * 孤儿图片清理：扫描所有工程的全部引用，删除不再被任何工程引用的
+     * 图片文件与 PPI 元数据（返回删除的文件数）。
+     * 建议在首页启动（后台线程）与删除工程后调用；编辑器运行期间勿调。
+     */
+    @Synchronized
+    fun gcImages(c: Context): Int {
+        val referenced = HashSet<String>()
+        projectsDir(c).listFiles { f -> f.name.endsWith(".folio") }?.forEach { f ->
+            try {
+                val p = Project.fromJson(JSONObject(f.readText()))
+                p.pages.forEach { pg -> pg.items.forEach { it.imgId?.let(referenced::add) } }
+            } catch (_: Exception) {}
+        }
+        var removed = 0
+        val meta = loadMeta(c)
+        var metaDirty = false
+        imagesDir(c).listFiles()?.forEach { f ->
+            val name = f.name
+            if (name == "meta.json") return@forEach
+            val id = name.substringBeforeLast('.')
+            if (id !in referenced) {
+                if (f.delete()) removed++
+                if (meta.remove(id) != null) metaDirty = true
+            }
+        }
+        if (metaDirty) saveMeta(c)
+        return removed
     }
 
     // ---------- 图片 ----------
