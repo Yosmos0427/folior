@@ -24,7 +24,7 @@ import kotlin.math.abs
  * 全屏放映。
  * - 摄影书 + 横屏：以书籍形式摊开，左右两页并排；封面单右、封底单左，跨页图连续
  * - 其余情况：单页放映
- * 左右滑动翻页/翻跨页，点按退出。
+ * 左右滑动翻页/翻跨页；右上角 ✕ 退出；底部拖动条快速定位页面。
  */
 class ViewerActivity : AppCompatActivity() {
 
@@ -32,6 +32,7 @@ class ViewerActivity : AppCompatActivity() {
     private var pageIndex = 0
     private lateinit var label: TextView
     private lateinit var viewer: View
+    private lateinit var scrubber: Scrubber
 
     private val dark = 0xFF14140F.toInt()
 
@@ -40,6 +41,8 @@ class ViewerActivity : AppCompatActivity() {
         val id = intent.getStringExtra("id") ?: finish().let { return }
         project = Store.listProjects(this).find { it.id == id } ?: finish().let { return }
         if (project.pages.isEmpty()) { finish(); return }
+        // 进入放映默认定位到编辑器当前页
+        pageIndex = (intent.getIntExtra("page", 0)).coerceIn(0, project.pages.size - 1)
 
         label = TextView(this).apply {
             textSize = 12.5f
@@ -63,8 +66,6 @@ class ViewerActivity : AppCompatActivity() {
                         val dy = ev.y - downY
                         if (abs(dx) > 70f * resources.displayMetrics.density && abs(dx) > abs(dy)) {
                             step(if (dx < 0) 1 else -1)
-                        } else if (ev.eventTime - ev.downTime < 250) {
-                            finish()
                         }
                     }
                 }
@@ -79,14 +80,90 @@ class ViewerActivity : AppCompatActivity() {
         viewer.layoutParams = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
 
+        val d = resources.displayMetrics.density
         val frame = FrameLayout(this).apply { setBackgroundColor(dark) }
         frame.addView(viewer)
+        // 页码标签：抬高到底部拖动条之上
+        label.setPadding(0, 0, 0, (56 * d).toInt())
         frame.addView(label, FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
             Gravity.BOTTOM or Gravity.CENTER))
+
+        // 右上角实体退出按钮
+        val closeBtn = TextView(this).apply {
+            text = "✕"
+            textSize = 20f
+            setTextColor(0xCCFFFFFF.toInt())
+            setPadding((16 * d).toInt(), (14 * d).toInt(), (16 * d).toInt(), (10 * d).toInt())
+            setOnClickListener { finish() }
+        }
+        frame.addView(closeBtn, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP or Gravity.END))
+
+        // 底部页面拖动条
+        scrubber = Scrubber(this).apply {
+            onSeek = { frac ->
+                val n = project.pages.size
+                if (n > 1) {
+                    val target = (frac * (n - 1)).toInt().coerceIn(0, n - 1)
+                    if (target != pageIndex) {
+                        pageIndex = target
+                        updateLabel()
+                        viewer.invalidate()
+                    }
+                }
+            }
+        }
+        frame.addView(scrubber, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, (44 * d).toInt(),
+            Gravity.BOTTOM or Gravity.CENTER))
+
         setContentView(frame)
 
+        scrubber.frac = if (project.pages.size > 1)
+            pageIndex.toFloat() / (project.pages.size - 1) else 0f
         updateLabel()
+    }
+
+    /** 简易可拖动条：细轨道 + 圆形滑块，拖动即时跳页。 */
+    private class Scrubber(ctx: android.content.Context) : View(ctx) {
+        var onSeek: ((Float) -> Unit)? = null
+        var frac = 0f          // 0..1
+
+        override fun onDraw(c: Canvas) {
+            val d = resources.displayMetrics.density
+            val pad = 24f * d
+            val cy = height / 2f
+            val w = width - pad * 2f
+            // 轨道
+            val tp = Paint(Paint.ANTI_ALIAS_FLAG)
+            tp.color = 0x33FFFFFF
+            tp.strokeCap = Paint.Cap.ROUND
+            tp.strokeWidth = 2f * d
+            c.drawLine(pad, cy, pad + w, cy, tp)
+            // 滑块
+            val th = Paint(Paint.ANTI_ALIAS_FLAG)
+            th.color = 0xE6FFFFFF.toInt()
+            val x = pad + w * frac
+            c.drawCircle(x, cy, 7f * d, th)
+        }
+
+        override fun onTouchEvent(ev: MotionEvent): Boolean {
+            val d = resources.displayMetrics.density
+            val pad = 24f * d
+            when (ev.action) {
+                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+                    val w = width - pad * 2f
+                    frac = ((ev.x - pad) / w).coerceIn(0f, 1f)
+                    onSeek?.invoke(frac)
+                    invalidate()
+                    return true
+                }
+            }
+            parent.requestDisallowInterceptTouchEvent(false)
+            return true
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -133,6 +210,8 @@ class ViewerActivity : AppCompatActivity() {
             if (ni == pageIndex) return
             pageIndex = ni
         }
+        scrubber.frac = if (project.pages.size > 1) pageIndex.toFloat() / (project.pages.size - 1) else 0f
+        scrubber.invalidate()
         updateLabel()
         viewer.invalidate()
     }

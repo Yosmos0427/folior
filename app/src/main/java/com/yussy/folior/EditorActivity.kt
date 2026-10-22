@@ -327,7 +327,9 @@ class EditorActivity : AppCompatActivity() {
         toolBtn("绘制") { setDrawMode(!drawMode) }
         toolBtn(if (project.type == Project.TYPE_EXHIBITION) "＋墙体" else "＋自定义页面") { addCustomSizePage() }
         toolBtn("底色") { pageBg() }
-        toolBtn("放映") { startActivity(Intent(this, ViewerActivity::class.java).putExtra("id", project.id)) }
+        toolBtn("放映") { startActivity(Intent(this, ViewerActivity::class.java)
+            .putExtra("id", project.id)
+            .putExtra("page", pageIndex)) }
         root.addView(tools)
 
         // ---- 页面条（竖屏在底部，横屏移到左侧）----
