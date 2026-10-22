@@ -252,10 +252,34 @@ class PageCanvas @JvmOverloads constructor(
             PageRenderer.drawPageBackground(p, page, canvas, s.rect)
         }
 
-        // 内容：裁切到"双页合围"区域，允许元素跨书脊连续显示
         if (slots.isNotEmpty()) {
             val union = RectF(slots[0].rect)
             slots.forEach { union.union(it.rect) }
+
+            // 墙外延伸预览（默认开启）：把超出页面的画面以半透明"幽灵"画在墙面之外，
+            // 便于判断被裁掉的内容；墙面内仍按正常不透明度渲染。
+            val hasOverflow = slots.any { s ->
+                p.pages.getOrNull(s.index)?.items?.any {
+                    it.x < -0.001f || it.y < -0.001f ||
+                        it.x + it.w > 1.001f || it.y + it.h > 1.001f
+                } == true
+            }
+            if (hasOverflow && cropItem == null) {
+                val ghostArea = RectF(union)
+                val mx = union.width() * 0.45f
+                val my = union.height() * 0.45f
+                ghostArea.set(union.left - mx, union.top - my, union.right + mx, union.bottom + my)
+                val layer = canvas.saveLayerAlpha(null, 56)   // ≈22% 不透明度
+                slots.forEach { canvas.clipOutRect(it.rect) } // 只画在墙面之外
+                canvas.clipRect(ghostArea)
+                for (s in slots) {
+                    val pg = p.pages.getOrNull(s.index) ?: continue
+                    PageRenderer.drawItems(context, p, pg, canvas, s.rect)
+                }
+                canvas.restoreToCount(layer)
+            }
+
+            // 内容：裁切到"双页合围"区域，墙面内正常渲染
             canvas.save()
             canvas.clipRect(union)
             for (s in slots) {
