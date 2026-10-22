@@ -35,6 +35,14 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var bottomStripWrap: LinearLayout
     private var pageIndex = 0
     private var spread = false
+    private lateinit var tools: LinearLayout
+    private lateinit var drawBar: LinearLayout
+    private var drawMode = false
+    private var brushColor = "#1A1A18"
+    private var eraserOn = false
+    private val brushBtns = ArrayList<TextView>()
+    private lateinit var eraserBtn: TextView
+    private lateinit var colorChip: TextView
 
     private val handler = Handler(Looper.getMainLooper())
     private val saveRunnable = Runnable { Store.save(this, project) }
@@ -221,8 +229,106 @@ class EditorActivity : AppCompatActivity() {
         })
         root.addView(cropBar)
 
+        // ---- 绘制模式工具条（进入绘制模式后替换底部工具条） ----
+        drawBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            setPadding(dp(8f), dp(4f), dp(8f), dp(4f))
+        }
+        fun drawBtnStyle(v: TextView, active: Boolean) {
+            v.setTextColor(if (active) 0xFFFAFAF7.toInt() else 0xFF1A1A18.toInt())
+            v.background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(8f).toFloat()
+                setColor(if (active) 0xFF1A1A18.toInt() else 0x00000000)
+            }
+        }
+        val brushDefs = arrayOf(
+            Triple("细笔", 0.005f, 1f),
+            Triple("中笔", 0.011f, 1f),
+            Triple("粗笔", 0.02f, 1f),
+            Triple("马克", 0.032f, 0.5f)
+        )
+        brushDefs.forEachIndexed { bi, (name, w, alpha) ->
+            val btn = TextView(this).apply {
+                text = name
+                textSize = 13f
+                setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
+                setOnClickListener {
+                    canvas.brush.width = w
+                    canvas.brush.alpha = alpha
+                    canvas.brush.marker = name == "马克"
+                    eraserOn = false
+                    canvas.eraserMode = false
+                    refreshDrawBar(bi)
+                }
+            }
+            brushBtns.add(btn)
+            drawBar.addView(btn, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                rightMargin = dp(5f)
+            })
+        }
+        // 颜色块
+        colorChip = TextView(this).apply {
+            textSize = 13f
+            setTextColor(0xFF1A1A18.toInt())
+            setPadding(dp(10f), dp(8f), dp(10f), dp(8f))
+            setOnClickListener {
+                ColorPickerDialog.show(this@EditorActivity, "笔具颜色", brushColor) { c ->
+                    brushColor = c
+                    canvas.brush.color = c
+                    refreshDrawBar(-1)
+                }
+            }
+        }
+        drawBar.addView(colorChip, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            rightMargin = dp(5f)
+        })
+        // 橡皮
+        eraserBtn = TextView(this).apply {
+            text = "橡皮"
+            textSize = 13f
+            setTextColor(0xFF1A1A18.toInt())
+            setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
+            setOnClickListener {
+                eraserOn = !eraserOn
+                canvas.eraserMode = eraserOn
+                refreshDrawBar(-1)
+            }
+        }
+        drawBar.addView(eraserBtn, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            rightMargin = dp(5f)
+        })
+        // 撤销
+        drawBar.addView(TextView(this).apply {
+            text = "撤销"
+            textSize = 13f
+            setTextColor(0xFF1A1A18.toInt())
+            setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
+            setOnClickListener {
+                if (!canvas.undoDraw())
+                    Toast.makeText(this@EditorActivity, "没有可撤销的绘制", Toast.LENGTH_SHORT).show()
+            }
+        }, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            rightMargin = dp(5f)
+        })
+        // 完成
+        drawBar.addView(TextView(this).apply {
+            text = "完成"
+            textSize = 13f
+            setTextColor(0xFFFAFAF7.toInt())
+            setBackgroundColor(0xFF1A1A18.toInt())
+            setPadding(dp(16f), dp(8f), dp(16f), dp(8f))
+            setOnClickListener { setDrawMode(false) }
+        })
+        root.addView(drawBar)
+
         // ---- 底部工具条 ----
-        val tools = LinearLayout(this).apply {
+        tools = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
             setPadding(dp(8f), dp(4f), dp(8f), dp(4f))
@@ -237,7 +343,7 @@ class EditorActivity : AppCompatActivity() {
         }
         toolBtn("＋照片") { pickPhotos() }
         toolBtn("＋文字") { addText() }
-        toolBtn("＋色块") { addShape() }
+        toolBtn("绘制") { setDrawMode(!drawMode) }
         toolBtn(if (project.type == Project.TYPE_EXHIBITION) "＋墙体" else "＋自定义页面") { addCustomSizePage() }
         toolBtn("底色") { pageBg() }
         toolBtn("放映") { startActivity(Intent(this, ViewerActivity::class.java).putExtra("id", project.id)) }
@@ -615,6 +721,60 @@ class EditorActivity : AppCompatActivity() {
         } else "${pageIndex + 1} / ${project.pages.size}"
     }
 
+    /** 进入/退出绘制模式：底部工具条与笔具条互换，画布切换触摸通道。 */
+    private fun setDrawMode(on: Boolean) {
+        drawMode = on
+        canvas.drawMode = on
+        if (on) {
+            canvas.select(null)
+            canvas.brush.color = brushColor
+            canvas.eraserMode = eraserOn
+        } else {
+            canvas.eraserMode = false
+            canvas.clearDrawUndo()
+            scheduleSave()
+        }
+        tools.visibility = if (on) View.GONE else View.VISIBLE
+        drawBar.visibility = if (on) View.VISIBLE else View.GONE
+        if (on) refreshDrawBar(-1)
+        updateBars()
+        Toast.makeText(this,
+            if (on) "绘制模式 · S Pen 压感与手指均可落笔" else "已退出绘制",
+            Toast.LENGTH_SHORT).show()
+    }
+
+    /** 刷新笔具条高亮与颜色块。activeBrush：当前笔索引，-1 表示不变。 */
+    private fun refreshDrawBar(activeBrush: Int) {
+        // 找出当前生效的笔（按宽度匹配）
+        var cur = -1
+        if (!eraserOn) cur = when (canvas.brush.width) {
+            0.005f -> 0; 0.011f -> 1; 0.02f -> 2; 0.032f -> 3; else -> 1
+        }
+        for (i in brushBtns.indices) {
+            val v = brushBtns[i]
+            val active = i == cur && !eraserOn
+            v.setTextColor(if (active) 0xFFFAFAF7.toInt() else 0xFF1A1A18.toInt())
+            v.background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(8f).toFloat()
+                setColor(if (active) 0xFF1A1A18.toInt() else 0x00000000)
+            }
+        }
+        eraserBtn.setTextColor(if (eraserOn) 0xFFB5442A.toInt() else 0xFF1A1A18.toInt())
+        eraserBtn.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(8f).toFloat()
+            if (eraserOn) {
+                setColor(0x14B5442A)
+                setStroke(dp(1f), 0xFFB5442A.toInt())
+            } else setColor(0x00000000)
+        }
+        // 颜色块：显示当前笔色
+        colorChip.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(8f).toFloat()
+            setColor(com.yussy.folior.model.parseColor(brushColor, 0xFF1A1A18.toInt()))
+            setStroke(dp(1f), 0x22000000)
+        }
+    }
+
     private fun updateBars() {
         if (canvas.selected != null && canvas.activeIndex != pageIndex) {
             pageIndex = canvas.activeIndex
@@ -623,7 +783,8 @@ class EditorActivity : AppCompatActivity() {
         updatePageLabel()
         val inCrop = canvas.cropItem != null
         cropBar.visibility = if (inCrop) View.VISIBLE else View.GONE
-        selectionBar.visibility = if (!inCrop && canvas.selected != null) View.VISIBLE else View.GONE
+        selectionBar.visibility =
+            if (!inCrop && !drawMode && canvas.selected != null) View.VISIBLE else View.GONE
         if (canvas.selected != null) {
             val it = canvas.selected!!
             // 裁剪按钮只对照片有效；编辑对文字/色块有效 —— 动态调整第一个按钮文案
@@ -849,17 +1010,6 @@ class EditorActivity : AppCompatActivity() {
             canvas.select(item)
             scheduleSave()
         }
-    }
-
-    private fun addShape() {
-        val item = Item(
-            type = Item.TYPE_SHAPE, shapeKind = "rect", shapeColor = "#1A1A18",
-            x = 0.3f, y = 0.42f, w = 0.4f, h = 0.12f
-        )
-        page().items.add(item)
-        canvas.invalidate()
-        canvas.select(item)
-        scheduleSave()
     }
 
     // ---------- 选中项操作 ----------

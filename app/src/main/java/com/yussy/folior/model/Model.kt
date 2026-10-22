@@ -113,12 +113,20 @@ data class Item(
     var lineHeight: Float = 1.4f,
     // shape
     var shapeKind: String = "rect",  // rect | line
-    var shapeColor: String = "#1A1A18"
+    var shapeColor: String = "#1A1A18",
+    // stroke（手绘笔画）
+    var strokeColor: String = "#1A1A18",
+    var strokeW: Float = 0.012f,        // 线宽（页高比例）
+    var strokeAlpha: Float = 1f,        // 马克笔约 0.5
+    var strokeMarker: Boolean = false,  // 马克笔（半透明平头）
+    /** 扁平点列 x,y,p（相对边界框 0..1，p = 压感 0..1） */
+    var pts: MutableList<Float> = mutableListOf()
 ) {
     companion object {
         const val TYPE_PHOTO = "photo"
         const val TYPE_TEXT = "text"
         const val TYPE_SHAPE = "shape"
+        const val TYPE_STROKE = "stroke"
 
         fun fromJson(o: JSONObject): Item {
             val it = Item(id = o.optString("id", UUID.randomUUID().toString()))
@@ -144,6 +152,13 @@ data class Item(
             it.lineHeight = o.optDouble("lineHeight", 1.4).toFloat()
             it.shapeKind = o.optString("shapeKind", "rect")
             it.shapeColor = o.optString("shapeColor", "#1A1A18")
+            it.strokeColor = o.optString("strokeColor", "#1A1A18")
+            it.strokeW = o.optDouble("strokeW", 0.012).toFloat()
+            it.strokeAlpha = o.optDouble("strokeAlpha", 1.0).toFloat()
+            it.strokeMarker = o.optBoolean("strokeMarker", false)
+            val ptsArr = o.optJSONArray("pts")
+            if (ptsArr != null) for (k in 0 until ptsArr.length())
+                it.pts.add(ptsArr.optDouble(k).toFloat())
             return it
         }
     }
@@ -165,6 +180,11 @@ data class Item(
         o.put("color", color); o.put("bold", bold); o.put("italic", italic)
         o.put("align", align); o.put("lineHeight", lineHeight.toDouble())
         o.put("shapeKind", shapeKind); o.put("shapeColor", shapeColor)
+        o.put("strokeColor", strokeColor); o.put("strokeW", strokeW.toDouble())
+        o.put("strokeAlpha", strokeAlpha.toDouble()); o.put("strokeMarker", strokeMarker)
+        val ptsArr = JSONArray()
+        pts.forEach { ptsArr.put(it.toDouble()) }
+        o.put("pts", ptsArr)
         return o
     }
 

@@ -162,6 +162,45 @@ object PageRenderer {
                     else -> canvas.drawRect(fl, fT, fl + fw, fT + fh, p)
                 }
             }
+            Item.TYPE_STROKE -> {
+                if (item.pts.size >= 3) {
+                    val base = (item.strokeW * hPx).coerceAtLeast(1f)
+                    p.style = Paint.Style.STROKE
+                    p.color = parseColor(item.strokeColor, Color.BLACK)
+                    p.alpha = (item.strokeAlpha.coerceIn(0.1f, 1f) * 255f).toInt()
+                    p.strokeJoin = Paint.Join.ROUND
+                    p.strokeCap = if (item.strokeMarker) Paint.Cap.BUTT else Paint.Cap.ROUND
+                    fun px(k: Int) = fl + item.pts[k] * fw
+                    fun py(k: Int) = fT + item.pts[k + 1] * fh
+                    if (item.strokeMarker) {
+                        // 马克笔：整条路径一次绘制（平头半透明），避免接缝处叠加变深
+                        p.strokeWidth = base
+                        val path = Path()
+                        path.moveTo(px(0), py(0))
+                        var k = 3
+                        while (k < item.pts.size) { path.lineTo(px(k), py(k)); k += 3 }
+                        canvas.drawPath(path, p)
+                    } else {
+                        // 压感笔：按点压感分段变宽（S Pen 笔锋）
+                        var ax = px(0); var ay = py(0)
+                        var k = 3
+                        while (k < item.pts.size) {
+                            val bx = px(k); val by = py(k)
+                            val press = item.pts[k + 2].coerceIn(0f, 1f)
+                            p.strokeWidth = (base * (0.35f + 0.65f * press)).coerceAtLeast(1f)
+                            canvas.drawLine(ax, ay, bx, by, p)
+                            ax = bx; ay = by
+                            k += 3
+                        }
+                        if (item.pts.size == 3) {
+                            // 单点（点触）：实心圆点
+                            p.style = Paint.Style.FILL
+                            canvas.drawCircle(ax, ay,
+                                base * 0.5f * (0.35f + 0.65f * item.pts[2]), p)
+                        }
+                    }
+                }
+            }
         }
         canvas.restore()
     }

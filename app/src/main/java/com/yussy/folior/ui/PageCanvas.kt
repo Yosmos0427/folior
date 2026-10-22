@@ -95,6 +95,42 @@ class PageCanvas @JvmOverloads constructor(
     private var emptyDownY = 0f
     private var hasItemAtDown = false
 
+    // ---------------- 绘制模式（S Pen / 手指） ----------------
+
+    class DrawBrush {
+        var width = 0.011f          // 线宽（页高比例），默认=中笔
+        var color = "#1A1A18"
+        var alpha = 1f
+        var marker = false
+    }
+
+    var drawMode = false
+    var eraserMode = false
+    val brush = DrawBrush()
+
+    private var drawing = false
+    private var drawPtrId = -1
+    private var drawIsStylus = false
+    private var drawSlot: Slot? = null
+    private val liveRaw = mutableListOf<Float>()   // 页归一化坐标 x,y,p
+    private var liveStroke: Item? = null
+
+    class UndoOp(val add: Boolean, val page: Page, val item: Item)
+    private val undoStack = ArrayDeque<UndoOp>()
+
+    /** 撤销最近一次绘制/擦除，最多回溯 20 步。 */
+    fun undoDraw(): Boolean {
+        if (undoStack.isEmpty()) return false
+        val op = undoStack.removeLast()
+        if (op.add) op.page.items.remove(op.item)
+        else op.page.items.add(op.item)
+        onModified?.invoke()
+        invalidate()
+        return true
+    }
+
+    fun clearDrawUndo() { undoStack.clear() }
+
     private val gesture = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent): Boolean = true
 
@@ -289,6 +325,17 @@ class PageCanvas @JvmOverloads constructor(
             canvas.restore()
         }
 
+        // 绘制模式：落笔中的实时笔画预览（抬笔后成为正式元素）
+        liveStroke?.let { st ->
+            drawSlot?.let { s ->
+                canvas.save()
+                canvas.clipRect(s.rect)
+                PageRenderer.drawItem(context, st, canvas,
+                    s.rect.left, s.rect.top, s.rect.width(), s.rect.height(), false)
+                canvas.restore()
+            }
+        }
+
         if (cropItem != null) { drawCropMode(canvas); return }
 
         // 展览：工作区边缘实际尺寸标尺（单位：米）
@@ -441,7 +488,206 @@ class PageCanvas @JvmOverloads constructor(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(ev: MotionEvent): Boolean =
-        if (cropItem != null) cropTouch(ev) else editTouch(ev)
+        when {
+            cropItem != null -> cropTouch(ev)
+            drawMode -> drawTouch(ev)
+            else -> editTouch(ev)
+        }
+
+    // ---------------- 绘制触摸 ----------------
+
+    /**
+     * S Pen 适配：
+     * - 压感笔锋：TOOL_TYPE_STYLUS 时按 getPressure() 调制线宽；手指恒定线宽
+     * - 笔落下自动接管：绘画中笔尖落下会取消手指未完成的笔画，避免混线
+     * - 防误触：仅跟踪落笔那根指针，手掌/其他手指落下与移动全部忽略
+     */
+    private fun drawTouch(ev: MotionEvent): Boolean {
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                requestUnbufferedDispatch(ev)   // 降低笔迹延迟
+                val i = ev.actionIndex
+                if (eraserMode) {
+                    eraseAt(ev.getX(i), ev.getY(i))
+                    return true
+                }
+                startDrawPointer(ev, i)
+                return true
+            }
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (eraserMode) return true
+                val i = ev.actionIndex
+                if (ev.getToolType(i) == MotionEvent.TOOL_TYPE_STYLUS && !drawIsStylus) {
+                    // S Pen 接管：手指未完成的笔画作废，笔迹重新开始
+                    endStroke(false)
+                    startDrawPointer(ev, i)
+                }
+                // 其余新指针（手掌等）一律忽略
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (eraserMode) {
+                    for (i in 0 until ev.pointerCount) eraseAt(ev.getX(i), ev.getY(i))
+                    return true
+                }
+                val i = if (drawPtrId >= 0) ev.findPointerIndex(drawPtrId) else -1
+                if (drawing && i >= 0)
+                    extendStroke(ev.getX(i), ev.getY(i), pressureOf(ev, i))
+                return true
+            }
+            MotionEvent.ACTION_POINTER_UP -> {
+                if (eraserMode) return true
+                val i = ev.actionIndex
+                if (ev.getPointerId(i) == drawPtrId) endStroke(true)
+                return true
+            }
+            MotionEvent.ACTION_UP -> {
+                if (eraserMode) return true
+                if (ev.getPointerId(ev.actionIndex) == drawPtrId) endStroke(true)
+                return true
+            }
+            MotionEvent.ACTION_CANCEL -> endStroke(false)
+        }
+        return true
+    }
+
+    private fun startDrawPointer(ev: MotionEvent, i: Int) {
+        drawPtrId = ev.getPointerId(i)
+        drawIsStylus = ev.getToolType(i) == MotionEvent.TOOL_TYPE_STYLUS
+        beginStroke(ev.getX(i), ev.getY(i), pressureOf(ev, i))
+    }
+
+    private fun pressureOf(ev: MotionEvent, i: Int): Float =
+        if (drawIsStylus) ev.getPressure(i).coerceIn(0.05f, 1f) else 1f
+
+    private fun slotAt(vx: Float, vy: Float): Slot? =
+        slots.firstOrNull { it.rect.contains(vx, vy) }
+            ?: slots.minByOrNull {
+                val dx = max(0f, max(it.rect.left - vx, vx - it.rect.right))
+                val dy = max(0f, max(it.rect.top - vy, vy - it.rect.bottom))
+                dx + dy
+            }
+
+    private fun beginStroke(vx: Float, vy: Float, pressure: Float) {
+        val slot = slotAt(vx, vy) ?: return
+        drawSlot = slot
+        liveRaw.clear()
+        liveRaw.add((vx - slot.rect.left) / slot.rect.width())
+        liveRaw.add((vy - slot.rect.top) / slot.rect.height())
+        liveRaw.add(pressure)
+        drawing = true
+        rebuildLive()
+        invalidate()
+    }
+
+    private fun extendStroke(vx: Float, vy: Float, pressure: Float) {
+        val slot = drawSlot ?: return
+        liveRaw.add((vx - slot.rect.left) / slot.rect.width())
+        liveRaw.add((vy - slot.rect.top) / slot.rect.height())
+        liveRaw.add(pressure)
+        rebuildLive()
+        invalidate()
+    }
+
+    /** 由原始点列重建实时笔画（边界框 + 框内相对坐标），抬笔即原样提交。 */
+    private fun rebuildLive() {
+        if (liveRaw.size < 3) return
+        val slot = drawSlot ?: return
+        var minX = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE
+        var minY = Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        var k = 0
+        while (k < liveRaw.size) {
+            if (liveRaw[k] < minX) minX = liveRaw[k]
+            if (liveRaw[k] > maxX) maxX = liveRaw[k]
+            if (liveRaw[k + 1] < minY) minY = liveRaw[k + 1]
+            if (liveRaw[k + 1] > maxY) maxY = liveRaw[k + 1]
+            k += 3
+        }
+        // 半线宽外扩（含圆头），x 按页面宽高比换算归一化
+        val aspect = slot.rect.width() / slot.rect.height()
+        val padY = brush.width * 0.7f
+        val padX = padY / aspect
+        val x0 = minX - padX; val y0 = minY - padY
+        val bw = (maxX - minX) + padX * 2f
+        val bh = (maxY - minY) + padY * 2f
+        val rel = mutableListOf<Float>()
+        var j = 0
+        while (j < liveRaw.size) {
+            rel.add((liveRaw[j] - x0) / bw)
+            rel.add((liveRaw[j + 1] - y0) / bh)
+            rel.add(liveRaw[j + 2])
+            j += 3
+        }
+        liveStroke = Item(
+            type = Item.TYPE_STROKE,
+            x = x0, y = y0, w = bw, h = bh,
+            strokeColor = brush.color, strokeW = brush.width,
+            strokeAlpha = brush.alpha, strokeMarker = brush.marker,
+            pts = rel
+        )
+    }
+
+    private fun endStroke(commit: Boolean) {
+        val st = liveStroke
+        drawing = false
+        liveStroke = null
+        liveRaw.clear()
+        val slot = drawSlot
+        drawSlot = null
+        if (!commit || st == null || slot == null) { invalidate(); return }
+        val pg = project?.pages?.getOrNull(slot.index) ?: return
+        pg.items.add(st)
+        undoStack.add(UndoOp(true, pg, st))
+        if (undoStack.size > 20) undoStack.removeFirst()
+        onModified?.invoke()
+        invalidate()
+    }
+
+    /** 对象级橡皮：命中任一可见页上的笔画即整条删除。 */
+    private fun eraseAt(vx: Float, vy: Float) {
+        val p = project ?: return
+        for (slot in slots) {
+            val pg = p.pages.getOrNull(slot.index) ?: continue
+            val idx = pg.items.indexOfLast {
+                it.type == Item.TYPE_STROKE && strokeHit(it, slot, vx, vy)
+            }
+            if (idx >= 0) {
+                val item = pg.items.removeAt(idx)
+                undoStack.add(UndoOp(false, pg, item))
+                if (undoStack.size > 20) undoStack.removeFirst()
+                onModified?.invoke()
+                invalidate()
+                return
+            }
+        }
+    }
+
+    private fun strokeHit(it: Item, slot: Slot, vx: Float, vy: Float): Boolean {
+        val r = slot.rect
+        val d = resources.displayMetrics.density
+        val thresh = it.strokeW * r.height() * 0.6f + 10f * d
+        var ax = 0f; var ay = 0f
+        var count = 0
+        var best = Float.MAX_VALUE
+        var k = 0
+        while (k + 2 < it.pts.size) {
+            val x = r.left + (it.x + it.pts[k] * it.w) * r.width()
+            val y = r.top + (it.y + it.pts[k + 1] * it.h) * r.height()
+            if (count > 0) best = min(best, distToSeg(vx, vy, ax, ay, x, y))
+            ax = x; ay = y; count++
+            k += 3
+        }
+        if (count == 1) best = hypot(vx - ax, vy - ay)
+        return best <= thresh
+    }
+
+    private fun distToSeg(px: Float, py: Float, ax: Float, ay: Float, bx: Float, by: Float): Float {
+        val dx = bx - ax; val dy = by - ay
+        val len2 = dx * dx + dy * dy
+        val t = if (len2 < 1e-8f) 0f
+        else (((px - ax) * dx + (py - ay) * dy) / len2).coerceIn(0f, 1f)
+        return hypot(px - (ax + t * dx), py - (ay + t * dy))
+    }
 
     private fun cropTouch(ev: MotionEvent): Boolean {
         val it = cropItem ?: return false
