@@ -118,6 +118,7 @@ data class Item(
     var italic: Boolean = false,
     var align: Int = 0,              // 0 left 1 center 2 right
     var lineHeight: Float = 1.4f,
+    var vertical: Boolean = false,  // 竖排（自右向左成列）
     // shape
     var shapeKind: String = "rect",  // rect | line
     var shapeColor: String = "#1A1A18",
@@ -172,6 +173,7 @@ data class Item(
             it.italic = o.optBoolean("italic", false)
             it.align = o.optInt("align", 0)
             it.lineHeight = o.optDouble("lineHeight", 1.4).toFloat()
+            it.vertical = o.optBoolean("vertical", false)
             it.shapeKind = o.optString("shapeKind", "rect")
             it.shapeColor = o.optString("shapeColor", "#1A1A18")
             it.strokeColor = o.optString("strokeColor", "#1A1A18")
@@ -207,6 +209,7 @@ data class Item(
         o.put("fontScale", fontScale.toDouble())
         o.put("color", color); o.put("bold", bold); o.put("italic", italic)
         o.put("align", align); o.put("lineHeight", lineHeight.toDouble())
+        o.put("vertical", vertical)
         o.put("shapeKind", shapeKind); o.put("shapeColor", shapeColor)
         o.put("strokeColor", strokeColor); o.put("strokeW", strokeW.toDouble())
         o.put("strokeAlpha", strokeAlpha.toDouble()); o.put("strokeMarker", strokeMarker)

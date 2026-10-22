@@ -28,6 +28,8 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var strip: PageStrip
     private lateinit var pageLabel: TextView
     private lateinit var selectionBar: LinearLayout
+    private lateinit var framingPanel: FramingPanel
+    private var framingOpen = false
     private lateinit var cropBar: LinearLayout
     private lateinit var bodyRow: LinearLayout
     private lateinit var canvasWrap: android.widget.FrameLayout
@@ -175,15 +177,7 @@ class EditorActivity : AppCompatActivity() {
         selBtn("装裱") {
             val it = selected() ?: return@selBtn
             if (it.type != Item.TYPE_PHOTO && it.type != Item.TYPE_TEXT) return@selBtn
-            val conf = FrameDialog.Conf(it.matStyle, it.matColor, it.matPad, it.matRatio,
-                it.frameStyle, it.frameColor, it.frameW)
-            FrameDialog.show(this, conf) { c ->
-                it.matStyle = c.matStyle; it.matColor = c.matColor
-                it.matPad = c.matPad; it.matRatio = c.matRatio
-                it.frameStyle = c.frameStyle; it.frameColor = c.frameColor
-                it.frameW = c.frameW
-                canvas.invalidate(); scheduleSave()
-            }
+            openFraming(it)
         }
         selBtn("尺寸") {
             val it = selected() ?: return@selBtn
@@ -207,6 +201,12 @@ class EditorActivity : AppCompatActivity() {
         selectionBar.addView(selRow1)
         selectionBar.addView(selRow2)
         root.addView(selectionBar)
+
+        // ---- 内联装裱面板（布局流内，不遮挡工作区；即时生效） ----
+        framingPanel = FramingPanel(this).apply { visibility = View.GONE }
+        framingPanel.onChanged = { canvas.invalidate(); scheduleSave() }
+        framingPanel.onClosed = { closeFraming() }
+        root.addView(framingPanel)
 
         // ---- 裁切确认栏 ----
         cropBar = LinearLayout(this).apply {
@@ -312,8 +312,7 @@ class EditorActivity : AppCompatActivity() {
             setTextColor(0xFF1A1A18.toInt())
             setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
             setOnClickListener {
-                if (!canvas.undoDraw())
-                    Toast.makeText(this@EditorActivity, "没有可撤销的绘制", Toast.LENGTH_SHORT).show()
+                canvas.undoDraw()
             }
         }, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -370,6 +369,7 @@ class EditorActivity : AppCompatActivity() {
         canvas.onModified = { scheduleSave(); strip.refresh() }
         canvas.onOpenCrop = { canvas.enterCrop(it); updateBars() }
         canvas.onFlip = { dir -> flipSpread(dir) }
+        canvas.onEditText = { it -> editItem(it) }
         canvas.onDragTargetAt = { x, y -> strip.pageAt(x, y) }
         canvas.onStripHighlight = { idx -> strip.setDragTarget(idx) }
         canvas.onItemDropToPage = { item, idx -> transferItemTo(item, idx) }
@@ -516,9 +516,6 @@ class EditorActivity : AppCompatActivity() {
         canvas.select(null)
         refreshAll()
         scheduleSave()
-        Toast.makeText(this,
-            if (project.type == Project.TYPE_EXHIBITION) "已删除第 ${pos + 1} 面墙"
-            else "已删除第 ${pos + 1} 页", Toast.LENGTH_SHORT).show()
     }
 
     /** 新建自定义尺寸页面（摄影书）/ 新建墙体（展览，单位米）。 */
@@ -536,8 +533,6 @@ class EditorActivity : AppCompatActivity() {
                 pageIndex += 1
                 refreshAll()
                 scheduleSave()
-                Toast.makeText(this,
-                    "已新建墙体 ${w / 1000f}×${h / 1000f} m", Toast.LENGTH_SHORT).show()
             }
         } else {
             PageSizeDialog.show(this, "新建自定义页面尺寸",
@@ -546,8 +541,6 @@ class EditorActivity : AppCompatActivity() {
                 pageIndex += 1
                 refreshAll()
                 scheduleSave()
-                Toast.makeText(this, "已新建页面 ${w.toInt()}×${h.toInt()}mm",
-                    Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -565,8 +558,6 @@ class EditorActivity : AppCompatActivity() {
             canvas.invalidateLayout()
             strip.refresh()
             scheduleSave()
-            Toast.makeText(this, "墙体已改为 ${w / 1000f}×${h / 1000f} m",
-                Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -579,8 +570,6 @@ class EditorActivity : AppCompatActivity() {
             canvas.invalidateLayout()
             strip.refresh()
             scheduleSave()
-            Toast.makeText(this, "尺寸已更新为 ${w.toInt()}×${h.toInt()}mm",
-                Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -658,11 +647,6 @@ class EditorActivity : AppCompatActivity() {
                 item.x = clampX(item.w, cxNow - item.w / 2f)
                 item.y = clampY(item.h, cyNow - item.h / 2f)
                 canvas.invalidate(); scheduleSave()
-                val over = item.w > 1.001f || item.h > 1.001f
-                Toast.makeText(this,
-                    if (over) "已设为 ${cm.toInt()}cm 宽，超出墙面部分会被裁切"
-                    else "照片尺寸已设为 ${cm.toInt()}cm 宽",
-                    if (over) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
             }
             .setNegativeButton("取消", null)
             .show()
@@ -692,8 +676,6 @@ class EditorActivity : AppCompatActivity() {
         canvas.select(item)
         refreshAll()
         scheduleSave()
-        val name = if (project.type == Project.TYPE_EXHIBITION) "墙" else "页"
-        Toast.makeText(this, "已移到第 ${targetIdx + 1} $name", Toast.LENGTH_SHORT).show()
     }
 
     private fun selected(): Item? = canvas.selected
@@ -741,9 +723,6 @@ class EditorActivity : AppCompatActivity() {
         drawBar.visibility = if (on) View.VISIBLE else View.GONE
         if (on) refreshDrawBar(-1)
         updateBars()
-        Toast.makeText(this,
-            if (on) "绘制模式 · S Pen 压感与手指均可落笔" else "已退出绘制",
-            Toast.LENGTH_SHORT).show()
     }
 
     /** 刷新笔具条高亮与颜色块。activeBrush：当前笔索引，-1 表示不变。 */
@@ -778,6 +757,21 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
+    /** 打开内联装裱面板：替换选择工具栏位置，调整即时生效。 */
+    private fun openFraming(target: Item) {
+        framingOpen = true
+        framingPanel.bind(target)
+        framingPanel.visibility = View.VISIBLE
+        updateBars()
+    }
+
+    private fun closeFraming() {
+        framingOpen = false
+        framingPanel.visibility = View.GONE
+        canvas.select(null)
+        updateBars()
+    }
+
     private fun updateBars() {
         if (canvas.selected != null && canvas.activeIndex != pageIndex) {
             pageIndex = canvas.activeIndex
@@ -785,9 +779,19 @@ class EditorActivity : AppCompatActivity() {
         }
         updatePageLabel()
         val inCrop = canvas.cropItem != null
+        // 装裱面板打开时：目标被取消选中或裁切中 → 自动收起
+        if (framingOpen) {
+            val bound = framingPanel.boundItem()
+            if (inCrop || canvas.selected == null || bound == null || canvas.selected !== bound) {
+                framingOpen = false
+                framingPanel.visibility = View.GONE
+            }
+        }
         cropBar.visibility = if (inCrop) View.VISIBLE else View.GONE
+        framingPanel.visibility = if (framingOpen) View.VISIBLE else View.GONE
         selectionBar.visibility =
-            if (!inCrop && !drawMode && canvas.selected != null) View.VISIBLE else View.GONE
+            if (!inCrop && !drawMode && !framingOpen && canvas.selected != null)
+                View.VISIBLE else View.GONE
         if (canvas.selected != null) {
             val it = canvas.selected!!
             // 裁剪按钮只对照片有效；编辑对文字/色块有效 —— 动态调整第一个按钮文案
@@ -916,9 +920,6 @@ class EditorActivity : AppCompatActivity() {
                         else addImportedPhoto(id, i)
                     }
                     canvas.select(page().items.lastOrNull())
-                    Toast.makeText(this,
-                        "已添加 ${imgIds.size} 张到第 ${pageIndex + 1} ${if (isExh) "墙" else "页"}",
-                        Toast.LENGTH_SHORT).show()
                 } else if (isExh) {
                     // 展览：新建一面默认尺寸的墙，照片按实际尺寸摆上
                     val wall = Page(wmm = project.pageWmm, hmm = project.pageHmm, bg = page().bg)
@@ -927,8 +928,6 @@ class EditorActivity : AppCompatActivity() {
                     pageIndex += 1
                     canvas.select(null)
                     refreshAll()
-                    Toast.makeText(this, "已新建墙体并放置 ${imgIds.size} 张照片",
-                        Toast.LENGTH_LONG).show()
                 } else {
                     // 每张照片一页，接在当前页之后
                     var insertAt = pageIndex
@@ -942,19 +941,11 @@ class EditorActivity : AppCompatActivity() {
                     pageIndex = firstNew
                     canvas.select(null)
                     refreshAll()
-                    Toast.makeText(this, "已添加 ${imgIds.size} 张照片 · 各占一页",
-                        Toast.LENGTH_LONG).show()
                 }
                 canvas.invalidate()
                 strip.refresh()
                 scheduleSave()
-                if (oversizeNotes.isNotEmpty()) {
-                    val sample = oversizeNotes.first()
-                    Toast.makeText(this,
-                        "有 ${oversizeNotes.size} 张超出墙面（如 $sample），超出部分在墙外被裁切，可拖动照片调整可见区域",
-                        Toast.LENGTH_LONG).show()
-                    oversizeNotes.clear()
-                }
+                oversizeNotes.clear()
             }
         }.start()
     }
@@ -1003,15 +994,16 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun addText() {
-        TextDialog.show(this, "文字", 0.04f, "#1A1A18", false, false, 0) { text, fs, color, bold, italic, align ->
+        TextDialog.show(this, "文字", 0.04f, "#1A1A18", false, false, 0) { text, fs, color, bold, italic, align, vertical, lineHeight ->
             val item = Item(
                 type = Item.TYPE_TEXT, text = text, fontScale = fs, color = color,
                 bold = bold, italic = italic, align = align,
+                vertical = vertical, lineHeight = lineHeight,
                 x = 0.2f, y = 0.42f, w = 0.6f, h = fs * 3f + 0.04f
             )
             page().items.add(item)
-            canvas.invalidate()
             canvas.select(item)
+            canvas.fitText(item)   // 按内容自适应高度
             scheduleSave()
         }
     }
@@ -1019,11 +1011,17 @@ class EditorActivity : AppCompatActivity() {
     // ---------- 选中项操作 ----------
 
     private fun editSelected() {
-        val it = selected() ?: return
+        editItem(selected() ?: return)
+    }
+
+    private fun editItem(it: Item) {
         when (it.type) {
-            Item.TYPE_TEXT -> TextDialog.show(this, it.text, it.fontScale, it.color, it.bold, it.italic, it.align) { text, fs, color, bold, italic, align ->
+            Item.TYPE_TEXT -> TextDialog.show(this, it.text, it.fontScale, it.color,
+                it.bold, it.italic, it.align, it.vertical, it.lineHeight) { text, fs, color, bold, italic, align, vertical, lineHeight ->
                 it.text = text; it.fontScale = fs; it.color = color
                 it.bold = bold; it.italic = italic; it.align = align
+                it.vertical = vertical; it.lineHeight = lineHeight
+                canvas.fitText(it)
                 canvas.invalidate(); scheduleSave()
             }
             Item.TYPE_SHAPE -> {
@@ -1130,15 +1128,8 @@ class EditorActivity : AppCompatActivity() {
                             }
                             override fun onDone(ok: Boolean, error: String?) {
                                 dialog.dismiss()
-                                val desc = when {
-                                    opts.mergeSpreads -> "已按对开页合并导出"
-                                    opts.insertBlankFirst -> "已插入首页空白（封面落在双页视图右侧）"
-                                    else -> "已按单页导出"
-                                }
-                                Toast.makeText(this@EditorActivity,
-                                    if (ok) "PDF 已导出 · $desc\n真实尺寸 ${project.pageWmm.toInt()}×${project.pageHmm.toInt()}mm"
-                                    else "导出失败：$error",
-                                    if (ok) Toast.LENGTH_LONG else Toast.LENGTH_SHORT).show()
+                                if (!ok) Toast.makeText(this@EditorActivity,
+                                    "导出失败：$error", Toast.LENGTH_SHORT).show()
                             }
                         })
                     }
@@ -1152,7 +1143,6 @@ class EditorActivity : AppCompatActivity() {
                 try {
                     contentResolver.openOutputStream(uri)?.use {
                         Store.exportBundle(this, project, it)
-                        Toast.makeText(this, "工程文件已导出（含全部照片）", Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
                     Toast.makeText(this, "导出失败：${e.message}", Toast.LENGTH_SHORT).show()

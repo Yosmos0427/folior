@@ -14,7 +14,9 @@ object TextDialog {
         ctx: Context,
         initialText: String, initialFontScale: Float, initialColor: String,
         initialBold: Boolean, initialItalic: Boolean, initialAlign: Int,
-        onDone: (text: String, fontScale: Float, color: String, bold: Boolean, italic: Boolean, align: Int) -> Unit
+        initialVertical: Boolean = false, initialLineHeight: Float = 1.4f,
+        onDone: (text: String, fontScale: Float, color: String, bold: Boolean,
+                 italic: Boolean, align: Int, vertical: Boolean, lineHeight: Float) -> Unit
     ) {
         val pad = (16 * ctx.resources.displayMetrics.density).toInt()
         val root = LinearLayout(ctx).apply {
@@ -52,8 +54,21 @@ object TextDialog {
 
         val row2 = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         var bold = initialBold; var italic = initialItalic; var align = initialAlign
+        var vertical = initialVertical
+        var lineHeight = initialLineHeight
         val boldBtn = toggleBtn(ctx, "粗", initialBold) { bold = it }
         val italicBtn = toggleBtn(ctx, "斜", initialItalic) { italic = it }
+        val vertBtn = toggleBtn(ctx, "竖排", initialVertical) { vertical = it }
+        val lineBtn = TextView(ctx).apply {
+            fun name() = when { lineHeight <= 1.25f -> "行距:紧"; lineHeight >= 1.7f -> "行距:宽"; else -> "行距:标" }
+            text = name()
+            setPadding(24, 24, 24, 8)
+            setTextColor(0xFF1A1A18.toInt())
+            setOnClickListener {
+                lineHeight = when { lineHeight <= 1.25f -> 1.4f; lineHeight <= 1.5f -> 1.8f; else -> 1.2f }
+                text = name()
+            }
+        }
         val alignBtn = TextView(ctx).apply {
             text = "对齐: " + when (align) { 1 -> "中"; 2 -> "右"; else -> "左" }
             setPadding(24, 24, 24, 8)
@@ -64,6 +79,7 @@ object TextDialog {
             }
         }
         row2.addView(boldBtn); row2.addView(italicBtn); row2.addView(alignBtn)
+        row2.addView(vertBtn); row2.addView(lineBtn)
         root.addView(row2)
 
         AlertDialog.Builder(ctx)
@@ -72,7 +88,8 @@ object TextDialog {
             .setPositiveButton("确定") { _, _ ->
                 val fs = (fontInput.text.toString().toFloatOrNull() ?: 40f) / 1000f
                 onDone(input.text.toString(), fs.coerceIn(0.005f, 0.5f),
-                    colorBtn.tag as? String ?: "#1A1A18", bold, italic, align)
+                    colorBtn.tag as? String ?: "#1A1A18", bold, italic, align,
+                    vertical, lineHeight)
             }
             .setNegativeButton("取消", null)
             .show()

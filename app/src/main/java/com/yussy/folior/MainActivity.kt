@@ -140,7 +140,7 @@ class MainActivity : AppCompatActivity() {
                 try {
                     contentResolver.openInputStream(uri)?.use {
                         val p = Store.importBundle(this, it)
-                        if (p != null) { load(); Toast.makeText(this, "已导入：${p.title}", Toast.LENGTH_SHORT).show() }
+                        if (p != null) load()   // 成功不提示，仅失败提示
                         else Toast.makeText(this, "导入失败：文件无效", Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
@@ -151,8 +151,7 @@ class MainActivity : AppCompatActivity() {
                 val p = pendingExport
                 try {
                     contentResolver.openOutputStream(uri)?.use {
-                        Store.exportBundle(this, p!!, it)
-                        Toast.makeText(this, "工程文件已导出", Toast.LENGTH_SHORT).show()
+                        Store.exportBundle(this, p!!, it)   // 成功不提示
                     }
                 } catch (e: Exception) {
                     Toast.makeText(this, "导出失败：${e.message}", Toast.LENGTH_SHORT).show()

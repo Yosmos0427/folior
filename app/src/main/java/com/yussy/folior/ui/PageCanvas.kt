@@ -42,6 +42,8 @@ class PageCanvas @JvmOverloads constructor(
     var onOpenCrop: ((Item) -> Unit)? = null
     var onFlip: ((Int) -> Unit)? = null          // -1 上一跨页 / +1 下一跨页
     var onSpanResult: ((Boolean) -> Unit)? = null
+    /** 双击文字：请求编辑（Activity 打开文字对话框） */
+    var onEditText: ((Item) -> Unit)? = null
 
     /** 元素拖动时查询预览栏目标页（raw 坐标），返回页索引或 -1 */
     var onDragTargetAt: ((rawX: Float, rawY: Float) -> Int)? = null
@@ -58,6 +60,7 @@ class PageCanvas @JvmOverloads constructor(
         private set
 
     private var dragging = false
+    private var resizing = false
     private var reordering = false
     private var reorderIndex = -1
     private val lastTouch = PointF()
@@ -144,6 +147,7 @@ class PageCanvas @JvmOverloads constructor(
             if (cropItem != null) return true
             val it = hitItem(e.x, e.y) ?: return false
             if (it.type == Item.TYPE_PHOTO && it.imgId != null) onOpenCrop?.invoke(it)
+            if (it.type == Item.TYPE_TEXT) onEditText?.invoke(it)
             return true
         }
 
@@ -436,8 +440,17 @@ class PageCanvas @JvmOverloads constructor(
         sp.strokeWidth = 2f
         canvas.drawRect(cx - fw / 2f, cy - fh / 2f, cx + fw / 2f, cy + fh / 2f, sp)
         sp.style = Paint.Style.FILL
-        canvas.drawCircle(cx + fw / 2f, cy + fh / 2f, 7f, sp)
-        canvas.drawCircle(cx - fw / 2f, cy - fh / 2f, 7f, sp)
+        canvas.drawCircle(cx - fw / 2f, cy - fh / 2f, 6f, sp)
+        // 右下角：拖拽调节大小手柄（白底红圈，更醒目）
+        val d = resources.displayMetrics.density
+        val hx = cx + fw / 2f; val hy = cy + fh / 2f
+        sp.color = 0xFFFFFFFF.toInt()
+        canvas.drawCircle(hx, hy, 11f * d, sp)
+        sp.style = Paint.Style.STROKE
+        sp.strokeWidth = 2.5f
+        sp.color = 0xFFB5442A.toInt()
+        canvas.drawCircle(hx, hy, 11f * d, sp)
+        sp.style = Paint.Style.FILL
         canvas.restore()
         if (reordering) {
             val tp = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -733,6 +746,11 @@ class PageCanvas @JvmOverloads constructor(
         gesture.onTouchEvent(ev)
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                if (selected != null && hitResizeHandle(ev.x, ev.y)) {
+                    resizing = true
+                    lastTouch.set(ev.x, ev.y)
+                    return true
+                }
                 lastTouch.set(ev.x, ev.y)
                 emptyDownX = ev.x; emptyDownY = ev.y
                 val hit = hitItem(ev.x, ev.y)
@@ -755,6 +773,7 @@ class PageCanvas @JvmOverloads constructor(
                 }
             }
             MotionEvent.ACTION_MOVE -> {
+                if (resizing) { handleResizeMove(ev); return true }
                 if (reordering) {
                     handleReorderMove(ev)
                     updateDropTarget(ev)
@@ -789,6 +808,12 @@ class PageCanvas @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 val isUp = ev.actionMasked == MotionEvent.ACTION_UP
+                if (resizing) {
+                    if (isUp) { resizing = false; onModified?.invoke() }
+                    else resizing = false
+                    invalidate()
+                    return true
+                }
                 if (reordering) {
                     val item = selected
                     if (isUp && dropTargetIdx >= 0 && item != null) {
@@ -927,6 +952,76 @@ class PageCanvas @JvmOverloads constructor(
             }
         }
         return null
+    }
+
+    /** 右下角手柄命中测试（含旋转）。 */
+    private fun hitResizeHandle(vx: Float, vy: Float): Boolean {
+        val it = selected ?: return false
+        val slot = slotOf(it) ?: return false
+        val cx = slot.rect.left + (it.x + it.w / 2f) * slot.rect.width()
+        val cy = slot.rect.top + (it.y + it.h / 2f) * slot.rect.height()
+        val fw = it.w * slot.rect.width(); val fh = it.h * slot.rect.height()
+        val rad = Math.toRadians(it.rotation.toDouble())
+        val lxp = fw / 2f; val lyp = fh / 2f
+        val hx = cx + (lxp * cos(rad) - lyp * sin(rad)).toFloat()
+        val hy = cy + (lxp * sin(rad) + lyp * cos(rad)).toFloat()
+        return hypot(vx - hx, vy - hy) <= 22f * resources.displayMetrics.density
+    }
+
+    /**
+     * 拖拽右下角手柄调节大小（中心保持不动）：
+     * 横排文字 → 调宽、高度按内容自适应；竖排文字 → 调高、宽度按列数自适应；
+     * 其余元素 → 自由缩放。
+     */
+    private fun handleResizeMove(ev: MotionEvent) {
+        val it = selected ?: return
+        val slot = slotOf(it) ?: return
+        val cxN = it.x + it.w / 2f
+        val cyN = it.y + it.h / 2f
+        val cx = slot.rect.left + cxN * slot.rect.width()
+        val cy = slot.rect.top + cyN * slot.rect.height()
+        val rad = -Math.toRadians(it.rotation.toDouble())
+        val dx = ev.x - cx; val dy = ev.y - cy
+        val lx = abs(dx * cos(rad) - dy * sin(rad)).toFloat()
+        val ly = abs(dx * sin(rad) + dy * cos(rad)).toFloat()
+        when {
+            it.type == Item.TYPE_TEXT && !it.vertical -> {
+                val wPx = (lx * 2f).coerceAtLeast(16f)
+                it.w = (wPx / slot.rect.width()).coerceIn(0.03f, 8f)
+                it.h = (PageRenderer.textLayoutHeightPx(it, wPx, slot.rect.height()) /
+                    slot.rect.height()).coerceIn(0.02f, 8f)
+            }
+            it.type == Item.TYPE_TEXT && it.vertical -> {
+                val hPx = (ly * 2f).coerceAtLeast(16f)
+                it.h = (hPx / slot.rect.height()).coerceIn(0.03f, 8f)
+                it.w = (PageRenderer.verticalTextWidthPx(it, hPx, slot.rect.height()) /
+                    slot.rect.width()).coerceIn(0.02f, 8f)
+            }
+            else -> {
+                it.w = (lx * 2f / slot.rect.width()).coerceIn(0.02f, 8f)
+                it.h = (ly * 2f / slot.rect.height()).coerceIn(0.02f, 8f)
+            }
+        }
+        // 中心保持
+        it.x = cxN - it.w / 2f
+        it.y = cyN - it.h / 2f
+        invalidate()
+    }
+
+    /** 文字内容/样式变化后按内容自适应尺寸（外露给 Activity 调用）。 */
+    fun fitText(item: Item) {
+        if (item.type != Item.TYPE_TEXT) return
+        val slot = slotOf(item) ?: return
+        if (item.vertical) {
+            item.w = (PageRenderer.verticalTextWidthPx(
+                item, item.h * slot.rect.height(), slot.rect.height()) /
+                slot.rect.width()).coerceAtLeast(0.02f)
+        } else {
+            item.h = (PageRenderer.textLayoutHeightPx(
+                item, item.w * slot.rect.width(), slot.rect.height()) /
+                slot.rect.height()).coerceAtLeast(0.02f)
+        }
+        invalidate()
     }
 
     /** 选中照片铺满整个跨页（跨书脊）。 */

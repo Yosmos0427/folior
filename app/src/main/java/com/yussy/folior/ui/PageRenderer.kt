@@ -129,17 +129,21 @@ object PageRenderer {
                     2 -> android.text.Layout.Alignment.ALIGN_OPPOSITE
                     else -> android.text.Layout.Alignment.ALIGN_NORMAL
                 }
-                val layoutW = fw.coerceAtLeast(tp.textSize)
-                val sl = android.text.StaticLayout.Builder
-                    .obtain(item.text, 0, item.text.length, tp, layoutW.toInt().coerceAtLeast(1))
-                    .setAlignment(alignment)
-                    .setLineSpacing(0f, item.lineHeight)
-                    .setIncludePad(false)
-                    .build()
-                canvas.save()
-                canvas.translate(fl, fT)
-                sl.draw(canvas)
-                canvas.restore()
+                if (item.vertical) {
+                    drawVerticalText(canvas, item, tp, fl, fT, fw, fh)
+                } else {
+                    val layoutW = fw.coerceAtLeast(tp.textSize)
+                    val sl = android.text.StaticLayout.Builder
+                        .obtain(item.text, 0, item.text.length, tp, layoutW.toInt().coerceAtLeast(1))
+                        .setAlignment(alignment)
+                        .setLineSpacing(0f, item.lineHeight)
+                        .setIncludePad(false)
+                        .build()
+                    canvas.save()
+                    canvas.translate(fl, fT)
+                    sl.draw(canvas)
+                    canvas.restore()
+                }
             }
             Item.TYPE_SHAPE -> {
                 p.color = parseColor(item.shapeColor, Color.BLACK)
@@ -193,6 +197,74 @@ object PageRenderer {
             }
         }
         canvas.restore()
+    }
+
+    // ---------------- 文字测量与竖排 ----------------
+
+    private fun textPaintOf(item: Item, pageHPx: Float): TextPaint =
+        TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.LINEAR_TEXT_FLAG).apply {
+            color = parseColor(item.color, Color.BLACK)
+            textSize = item.fontScale * pageHPx
+            isFakeBoldText = item.bold
+            textSkewX = if (item.italic) -0.25f else 0f
+        }
+
+    /** 横排：给定内容宽(px)返回所需内容高(px)。 */
+    fun textLayoutHeightPx(item: Item, wPx: Float, pageHPx: Float): Float {
+        val tp = textPaintOf(item, pageHPx)
+        val layoutW = wPx.coerceAtLeast(tp.textSize)
+        val sl = android.text.StaticLayout.Builder
+            .obtain(item.text, 0, item.text.length, tp, layoutW.toInt().coerceAtLeast(1))
+            .setAlignment(when (item.align) {
+                1 -> android.text.Layout.Alignment.ALIGN_CENTER
+                2 -> android.text.Layout.Alignment.ALIGN_OPPOSITE
+                else -> android.text.Layout.Alignment.ALIGN_NORMAL
+            })
+            .setLineSpacing(0f, item.lineHeight)
+            .setIncludePad(false)
+            .build()
+        return sl.height.toFloat()
+    }
+
+    /** 竖排：给定内容高(px)返回所需内容宽(px)。 */
+    fun verticalTextWidthPx(item: Item, hPx: Float, pageHPx: Float): Float {
+        val size = item.fontScale * pageHPx
+        val lineStep = size * item.lineHeight.coerceAtLeast(1f)
+        val colW = size * 1.25f
+        val perCol = (hPx / lineStep).toInt().coerceAtLeast(1)
+        val cols = ((item.text.length + perCol - 1) / perCol).coerceAtLeast(1)
+        return cols * colW
+    }
+
+    /** 竖排绘制：字符自上而下成列，列自右向左。 */
+    private fun drawVerticalText(
+        canvas: android.graphics.Canvas, item: Item, tp: TextPaint,
+        fl: Float, fT: Float, fw: Float, fh: Float
+    ) {
+        val size = tp.textSize
+        val lineStep = size * item.lineHeight.coerceAtLeast(1f)
+        val colW = size * 1.25f
+        val perCol = (fh / lineStep).toInt().coerceAtLeast(1)
+        val len = item.text.length
+        val cols = ((len + perCol - 1) / perCol).coerceAtLeast(1)
+        // 列区域整体居中于内容框
+        val blockW = cols * colW
+        val startX = fl + (fw + blockW) / 2f - colW / 2f   // 第一列（最右）中心
+        tp.textAlign = Paint.Align.CENTER
+        val fm = tp.fontMetrics
+        val baseline = -(fm.ascent + fm.descent) / 2f
+        var idx = 0
+        var col = 0
+        while (idx < len) {
+            val cx = startX - col * colW
+            var row = 0
+            while (idx < len && row < perCol) {
+                val ch = item.text.substring(idx, idx + 1)
+                canvas.drawText(ch, cx, fT + (row + 0.5f) * lineStep + baseline, tp)
+                idx++; row++
+            }
+            col++
+        }
     }
 
     // ---------------- 统一装裱（照片与文字共用） ----------------
