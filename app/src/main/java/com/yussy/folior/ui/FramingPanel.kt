@@ -220,23 +220,10 @@ class FramingPanel(context: Context) : LinearLayout(context) {
         val matColorRow = row()
         matColorRow.addView(rowLabel("颜色"))
         matColorRow.addView(colorButton("衬材颜色", { it.matColor }) { hex -> it.matColor = hex })
-        matColorRow.addView(TextView(context).apply {
-            text = "外延"; textSize = 12f
-            gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
-            setTextColor(0xFF8A8A84.toInt())
-            layoutParams = LinearLayout.LayoutParams(px(44f), ViewGroup.LayoutParams.MATCH_PARENT).apply {
-                leftMargin = px(10f)
-            }
-        })
-        matColorRow.addView(LinearLayout(context).apply {
-            orientation = VERTICAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            addView(sliderRow("", (it.matPad * 100).toInt().coerceIn(0, 40), 40) { p ->
-                it.matPad = p / 100f
-            })
-        })
         root.addView(matColorRow)
+        root.addView(sliderRow("外延", (it.matPad * 100).toInt().coerceIn(0, 40), 40) { p ->
+            it.matPad = p / 100f
+        })
 
         val ratioRow = row()
         ratioRow.addView(rowLabel("比例"))
@@ -263,14 +250,9 @@ class FramingPanel(context: Context) : LinearLayout(context) {
         val frameColorRow = row()
         frameColorRow.addView(rowLabel("颜色"))
         frameColorRow.addView(colorButton("边框颜色", { it.frameColor }) { hex -> it.frameColor = hex })
-        frameColorRow.addView(LinearLayout(context).apply {
-            orientation = VERTICAL
-            gravity = Gravity.CENTER_VERTICAL
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            addView(sliderRow("宽度", (it.frameW * 100).toInt().coerceIn(1, 8), 8) { p ->
-                it.frameW = p.coerceAtLeast(1) / 100f
-            })
-        })
         root.addView(frameColorRow)
+        root.addView(sliderRow("宽度", (it.frameW * 100).toInt().coerceIn(1, 8), 8) { p ->
+            it.frameW = p.coerceAtLeast(1) / 100f
+        })
     }
 }

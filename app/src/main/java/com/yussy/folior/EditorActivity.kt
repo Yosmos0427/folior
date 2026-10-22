@@ -32,6 +32,7 @@ class EditorActivity : AppCompatActivity() {
     private var framingOpen = false
     private lateinit var cropBar: LinearLayout
     private lateinit var bodyRow: LinearLayout
+    private lateinit var rootLayout: LinearLayout
     private lateinit var canvasWrap: android.widget.FrameLayout
     private lateinit var sideStripWrap: LinearLayout
     private lateinit var bottomStripWrap: LinearLayout
@@ -74,6 +75,7 @@ class EditorActivity : AppCompatActivity() {
 
     private fun buildUi() {
         val root = LinearLayout(this).apply {
+            rootLayout = this
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xFFFAFAF7.toInt())
         }
@@ -413,11 +415,19 @@ class EditorActivity : AppCompatActivity() {
         spread = land && project.type == Project.TYPE_BOOK
         canvas.spreadMode = spread
 
-        // 装裱面板：横屏限制为屏幕高的 42%（内部可滚动），竖屏自适应内容高度
-        framingPanel.layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            if (land) (resources.displayMetrics.heightPixels * 0.42f).toInt()
-            else ViewGroup.LayoutParams.WRAP_CONTENT)
+        // 装裱面板：横屏停靠在工作区右侧（垂直侧栏，内部可滚动）；
+        // 竖屏回到选择工具栏下方的底部位置
+        (framingPanel.parent as? ViewGroup)?.removeView(framingPanel)
+        if (land) {
+            val pw = (resources.displayMetrics.widthPixels * 0.38f).toInt()
+            bodyRow.addView(framingPanel, LinearLayout.LayoutParams(
+                pw, ViewGroup.LayoutParams.MATCH_PARENT))
+        } else {
+            val idx = (rootLayout.indexOfChild(selectionBar) + 1)
+                .coerceAtMost(rootLayout.childCount)
+            rootLayout.addView(framingPanel, idx, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
 
         if (land) {
             bottomStripWrap.visibility = View.GONE
