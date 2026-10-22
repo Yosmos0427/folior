@@ -49,7 +49,14 @@ object PageRenderer {
         highQuality: Boolean = false, pxHint: Int? = null
     ) {
         val isExhibition = project.type == Project.TYPE_EXHIBITION
+        // 笔画始终在最底层（页面之上、所有展示物之下），不遮挡照片/文字
         for (item in page.items) {
+            if (item.type != Item.TYPE_STROKE) continue
+            drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
+                isExhibition, highQuality, pxHint)
+        }
+        for (item in page.items) {
+            if (item.type == Item.TYPE_STROKE) continue
             drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
                 isExhibition, highQuality, pxHint)
         }
@@ -129,6 +136,8 @@ object PageRenderer {
                 }
             }
             Item.TYPE_TEXT -> {
+                // 背景材质（在文字之下）
+                item.textBg?.let { bg -> drawTextBg(canvas, bg, fl, fT, fw, fh) }
                 val tp = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.LINEAR_TEXT_FLAG)
                 tp.color = parseColor(item.color, Color.BLACK)
                 tp.textSize = item.fontScale * hPx
@@ -203,6 +212,69 @@ object PageRenderer {
             }
         }
         canvas.restore()
+    }
+
+    /** 文字背景材质：纸张 / 金属 / 木板 / 亚克力。 */
+    private fun drawTextBg(canvas: android.graphics.Canvas, kind: String,
+                           l: Float, t: Float, w: Float, h: Float) {
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        val r = Math.min(w, h) * 0.06f
+        val rect = RectF(l, t, l + w, t + h)
+        when (kind) {
+            "paper" -> {
+                p.color = 0xFFF7F4EC.toInt()
+                canvas.drawRoundRect(rect, r, r, p)
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = Math.max(1f, Math.min(w, h) * 0.006f)
+                p.color = 0x26000000
+                canvas.drawRoundRect(rect, r, r, p)
+            }
+            "metal" -> {
+                p.shader = LinearGradient(
+                    l, t, l, t + h,
+                    intArrayOf(0xFFEDEEF2.toInt(), 0xFFC2C4CC.toInt(),
+                               0xFFE4E5EA.toInt(), 0xFFAFB2BC.toInt()),
+                    floatArrayOf(0f, 0.45f, 0.55f, 1f), Shader.TileMode.CLAMP)
+                canvas.drawRoundRect(rect, r, r, p)
+                p.shader = null
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = Math.max(1f, Math.min(w, h) * 0.005f)
+                p.color = 0x33000000
+                canvas.drawRoundRect(rect, r, r, p)
+            }
+            "wood" -> {
+                p.shader = LinearGradient(
+                    l, t, l, t + h,
+                    intArrayOf(0xFF9A6B44.toInt(), 0xFF7C5232.toInt()),
+                    floatArrayOf(0f, 1f), Shader.TileMode.CLAMP)
+                canvas.drawRoundRect(rect, r, r, p)
+                // 木纹：数条半透明深色水平细纹
+                canvas.save()
+                canvas.clipPath(android.graphics.Path().apply {
+                    addRoundRect(rect, r, r, android.graphics.Path.Direction.CW)
+                })
+                val grain = Paint(Paint.ANTI_ALIAS_FLAG)
+                grain.color = 0x2E000000
+                grain.strokeWidth = Math.max(1f, h * 0.012f)
+                var y = t + h * 0.18f
+                var i = 0
+                while (y < t + h) {
+                    canvas.drawLine(l, y, l + w,
+                        y + if (i % 2 == 0) h * 0.02f else -h * 0.02f, grain)
+                    y += h * 0.22f; i++
+                }
+                canvas.restore()
+                p.shader = null
+            }
+            "acrylic" -> {
+                p.color = 0x59FFFFFF
+                canvas.drawRoundRect(rect, r, r, p)
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = Math.max(1f, Math.min(w, h) * 0.008f)
+                p.color = 0x8CFFFFFF.toInt()
+                canvas.drawRoundRect(rect, r, r, p)
+            }
+        }
     }
 
     private fun drawShadow(canvas: android.graphics.Canvas, l: Float, t: Float, w: Float, h: Float, radius: Float) {

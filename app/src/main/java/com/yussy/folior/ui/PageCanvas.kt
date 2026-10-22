@@ -898,12 +898,22 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     private fun hitItem(vx: Float, vy: Float): Item? {
+        // 展示物（照片/文字/色块）优先命中；笔画在最底层，未被覆盖时才可选中
+        hitNonStrokeFirst(vx, vy)?.let { return it }
+        return hitByType(vx, vy, strokeOnly = true)
+    }
+
+    private fun hitNonStrokeFirst(vx: Float, vy: Float): Item? =
+        hitByType(vx, vy, strokeOnly = false)
+
+    private fun hitByType(vx: Float, vy: Float, strokeOnly: Boolean): Item? {
         val p = project ?: return null
         for (si in slots.indices.reversed()) {
             val slot = slots[si]
             val page = p.pages.getOrNull(slot.index) ?: continue
             for (i in page.items.indices.reversed()) {
                 val it = page.items[i]
+                if ((it.type == Item.TYPE_STROKE) != strokeOnly) continue
                 val cx = slot.rect.left + (it.x + it.w / 2f) * slot.rect.width()
                 val cy = slot.rect.top + (it.y + it.h / 2f) * slot.rect.height()
                 val fw = it.w * slot.rect.width(); val fh = it.h * slot.rect.height()

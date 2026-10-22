@@ -999,10 +999,10 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun addText() {
-        TextDialog.show(this, "文字", 0.04f, "#1A1A18", false, false, 0) { text, fs, color, bold, italic, align ->
+        TextDialog.show(this, "文字", 0.04f, "#1A1A18", false, false, 0) { text, fs, color, bold, italic, align, textBg ->
             val item = Item(
                 type = Item.TYPE_TEXT, text = text, fontScale = fs, color = color,
-                bold = bold, italic = italic, align = align,
+                bold = bold, italic = italic, align = align, textBg = textBg,
                 x = 0.2f, y = 0.42f, w = 0.6f, h = fs * 3f + 0.04f
             )
             page().items.add(item)
@@ -1017,9 +1017,9 @@ class EditorActivity : AppCompatActivity() {
     private fun editSelected() {
         val it = selected() ?: return
         when (it.type) {
-            Item.TYPE_TEXT -> TextDialog.show(this, it.text, it.fontScale, it.color, it.bold, it.italic, it.align) { text, fs, color, bold, italic, align ->
+            Item.TYPE_TEXT -> TextDialog.show(this, it.text, it.fontScale, it.color, it.bold, it.italic, it.align, it.textBg) { text, fs, color, bold, italic, align, textBg ->
                 it.text = text; it.fontScale = fs; it.color = color
-                it.bold = bold; it.italic = italic; it.align = align
+                it.bold = bold; it.italic = italic; it.align = align; it.textBg = textBg
                 canvas.invalidate(); scheduleSave()
             }
             Item.TYPE_SHAPE -> {

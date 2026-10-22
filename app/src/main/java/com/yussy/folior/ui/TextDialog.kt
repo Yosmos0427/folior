@@ -14,7 +14,8 @@ object TextDialog {
         ctx: Context,
         initialText: String, initialFontScale: Float, initialColor: String,
         initialBold: Boolean, initialItalic: Boolean, initialAlign: Int,
-        onDone: (text: String, fontScale: Float, color: String, bold: Boolean, italic: Boolean, align: Int) -> Unit
+        initialTextBg: String? = null,
+        onDone: (text: String, fontScale: Float, color: String, bold: Boolean, italic: Boolean, align: Int, textBg: String?) -> Unit
     ) {
         val pad = (16 * ctx.resources.displayMetrics.density).toInt()
         val root = LinearLayout(ctx).apply {
@@ -63,6 +64,23 @@ object TextDialog {
                 text = "对齐: " + when (align) { 1 -> "中"; 2 -> "右"; else -> "左" }
             }
         }
+        val bgBtn = TextView(ctx).apply {
+            val names = mapOf<String?, String>(
+                null to "背景: 无", "paper" to "背景: 纸张", "metal" to "背景: 金属",
+                "wood" to "背景: 木板", "acrylic" to "背景: 亚克力")
+            val order = listOf<String?>(null, "paper", "metal", "wood", "acrylic")
+            var bg: String? = initialTextBg
+            text = names[bg]
+            setPadding(24, 24, 24, 8)
+            setTextColor(if (bg != null) 0xFFB5442A.toInt() else 0xFF1A1A18.toInt())
+            setOnClickListener {
+                bg = order[(order.indexOf(bg) + 1) % order.size]
+                text = names[bg]
+                setTextColor(if (bg != null) 0xFFB5442A.toInt() else 0xFF1A1A18.toInt())
+            }
+            tag = bg
+        }
+        row2.addView(bgBtn)
         row2.addView(boldBtn); row2.addView(italicBtn); row2.addView(alignBtn)
         root.addView(row2)
 
@@ -72,7 +90,8 @@ object TextDialog {
             .setPositiveButton("确定") { _, _ ->
                 val fs = (fontInput.text.toString().toFloatOrNull() ?: 40f) / 1000f
                 onDone(input.text.toString(), fs.coerceIn(0.005f, 0.5f),
-                    colorBtn.tag as? String ?: "#1A1A18", bold, italic, align)
+                    colorBtn.tag as? String ?: "#1A1A18", bold, italic, align,
+                    bgBtn.tag as? String)
             }
             .setNegativeButton("取消", null)
             .show()
