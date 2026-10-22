@@ -32,10 +32,6 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var cropBar: LinearLayout
     private lateinit var bodyRow: LinearLayout
     private lateinit var canvasWrap: android.widget.FrameLayout
-    private lateinit var deleteZone: LinearLayout
-    private var draggingPageId: String? = null
-    private var suppressReorderOnce = false
-    private var zoneHot = false
     private lateinit var sideStripWrap: LinearLayout
     private lateinit var bottomStripWrap: LinearLayout
     private var pageIndex = 0
@@ -128,8 +124,6 @@ class EditorActivity : AppCompatActivity() {
         canvas.layoutParams = android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         canvasWrap.addView(canvas)
-        deleteZone = buildDeleteZone()
-        canvasWrap.addView(deleteZone)
         bodyRow.addView(canvasWrap)
         root.addView(bodyRow)
 
@@ -152,6 +146,16 @@ class EditorActivity : AppCompatActivity() {
             selRow.addView(this)
         }
         selBtn("裁剪") { selected()?.let { if (it.type == Item.TYPE_PHOTO && it.imgId != null) canvas.enterCrop(it) } }
+        selBtn("装裱") {
+            val it = selected() ?: return@selBtn
+            if (it.type != Item.TYPE_PHOTO) return@selBtn
+            it.frameStyle = when (it.frameStyle) {
+                null -> "mat"; "mat" -> "frame"; else -> null
+            }
+            val name = when (it.frameStyle) { "mat" -> "卡纸"; "frame" -> "木框"; else -> "无" }
+            Toast.makeText(this, "装裱：$name", Toast.LENGTH_SHORT).show()
+            canvas.invalidate(); scheduleSave()
+        }
         selBtn("编辑") { editSelected() }
         selBtn("复制") { duplicateSelected() }
         selBtn("置顶") { bringTop() }
@@ -206,6 +210,7 @@ class EditorActivity : AppCompatActivity() {
         toolBtn("＋照片") { pickPhotos() }
         toolBtn("＋文字") { addText() }
         toolBtn("＋色块") { addShape() }
+        toolBtn(if (project.type == Project.TYPE_EXHIBITION) "＋墙体" else "＋自定义页面") { addCustomSizePage() }
         toolBtn("底色") { pageBg() }
         toolBtn("放映") { startActivity(Intent(this, ViewerActivity::class.java).putExtra("id", project.id)) }
         root.addView(tools)
@@ -238,21 +243,20 @@ class EditorActivity : AppCompatActivity() {
             updateBars()
         }
         strip.onPageReordered = { idx ->
-            if (suppressReorderOnce) {
-                // 该页已被拖入删除框删除，忽略紧随其后的换序回调
-                suppressReorderOnce = false
-            } else {
-                pageIndex = idx.coerceIn(0, project.pages.size - 1)
-                scheduleSave()
-                syncSpread()
-                canvas.invalidateLayout()
-                updateBars()
-            }
+            pageIndex = idx.coerceIn(0, project.pages.size - 1)
+            scheduleSave()
+            syncSpread()
+            canvas.invalidateLayout()
+            updateBars()
         }
-        strip.onPageAdded = { addPage() }
-        strip.onDragStart = { id -> draggingPageId = id; showDeleteZone() }
-        strip.onDragMove = { x, y -> handleDragMove(x, y) }
-        strip.onDragEnd = { id, x, y -> handleDragEnd(id, x, y) }
+        strip.onPageAdded = {
+            // 摄影书：普通空白页；展览：新建墙体（需输入尺寸）
+            if (project.type == Project.TYPE_EXHIBITION) addCustomSizePage() else addPage()
+        }
+        strip.onStripDelete = { pos ->
+            deletePageAt(pos)
+            strip.hideReveal()
+        }
 
         applyOrientation()
         refreshAll()
@@ -342,7 +346,6 @@ class EditorActivity : AppCompatActivity() {
                 pageIndex = ni
                 canvas.select(null)
                 strip.setCurrent(pageIndex)
-                strip.setCurrent(pageIndex)
                 syncSpread(); canvas.invalidateLayout(); updateBars()
             }
             return
@@ -356,99 +359,58 @@ class EditorActivity : AppCompatActivity() {
         pageIndex = if (target.first >= 0) target.first else target.second
         canvas.select(null)
         strip.setCurrent(pageIndex)
-        strip.setCurrent(pageIndex)
         syncSpread(); canvas.invalidateLayout(); updateBars()
     }
 
-    /** 工作区中央的删除投放框（长按拖页时浮现）。 */
-    private fun buildDeleteZone(): LinearLayout {
-        val zone = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            visibility = View.GONE
-            alpha = 0f
-            layoutParams = android.widget.FrameLayout.LayoutParams(
-                dp(132f), dp(132f), Gravity.CENTER)
-            background = zoneBg(false)
-        }
-        zone.addView(android.widget.ImageView(this).apply {
-            setImageResource(R.drawable.ic_trash)
-            layoutParams = LinearLayout.LayoutParams(dp(28f), dp(28f))
-        })
-        zone.addView(TextView(this).apply {
-            text = "删除页面"
-            textSize = 12f
-            setTextColor(0xFF6B6B66.toInt())
-            setPadding(0, dp(10f), 0, 0)
-        })
-        zone.elevation = dp(2f).toFloat()
-        return zone
-    }
-
-    private fun zoneBg(hot: Boolean) = android.graphics.drawable.GradientDrawable().apply {
-        cornerRadius = dp(18f).toFloat()
-        setColor(if (hot) 0xFFFDEFEA.toInt() else 0xF7FAFAF7.toInt())
-        setStroke(dp(if (hot) 1.6f else 1f), if (hot) 0xFFB5442A.toInt() else 0xFFD8D4C9.toInt())
-    }
-
-    private fun zoneRectOnScreen(): android.graphics.Rect {
-        val loc = IntArray(2)
-        deleteZone.getLocationOnScreen(loc)
-        return android.graphics.Rect(loc[0], loc[1],
-            loc[0] + deleteZone.width, loc[1] + deleteZone.height)
-    }
-
-    private fun showDeleteZone() {
-        zoneHot = false
-        deleteZone.background = zoneBg(false)
-        deleteZone.visibility = View.VISIBLE
-        deleteZone.scaleX = 0.92f; deleteZone.scaleY = 0.92f
-        deleteZone.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(130).start()
-    }
-
-    private fun hideDeleteZone() {
-        deleteZone.animate().alpha(0f).scaleX(0.94f).scaleY(0.94f).setDuration(110)
-            .withEndAction {
-                deleteZone.visibility = View.GONE
-                deleteZone.background = zoneBg(false)
-                zoneHot = false
-            }.start()
-    }
-
-    private fun handleDragMove(x: Float, y: Float) {
-        if (deleteZone.visibility != View.VISIBLE) return
-        val hot = zoneRectOnScreen().contains(x.toInt(), y.toInt())
-        if (hot != zoneHot) {
-            zoneHot = hot
-            deleteZone.background = zoneBg(hot)
-            deleteZone.animate().scaleX(if (hot) 1.06f else 1f)
-                .scaleY(if (hot) 1.06f else 1f).setDuration(90).start()
-        }
-    }
-
-    /** 拖入删除框即删页（替代菜单删除）。 */
-    private fun handleDragEnd(pageId: String, x: Float, y: Float) {
-        val dropped = deleteZone.visibility == View.VISIBLE &&
-            zoneRectOnScreen().contains(x.toInt(), y.toInt())
-        hideDeleteZone()
-        if (!dropped) return
-        suppressReorderOnce = true
-        deletePageById(pageId)
-    }
-
-    private fun deletePageById(pageId: String) {
-        val idx = project.pages.indexOfFirst { it.id == pageId }
-        if (idx < 0) return
+    /** 滑动呼出删除按钮后执行：删除第 pos 页/墙。 */
+    private fun deletePageAt(pos: Int) {
+        if (pos !in project.pages.indices) return
         if (project.pages.size <= 1) {
-            Toast.makeText(this, "至少保留一页", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this,
+                if (project.type == Project.TYPE_EXHIBITION) "至少保留一面墙" else "至少保留一页",
+                Toast.LENGTH_SHORT).show()
             return
         }
-        project.pages.removeAt(idx)
+        project.pages.removeAt(pos)
         pageIndex = pageIndex.coerceIn(0, project.pages.size - 1)
         canvas.select(null)
         refreshAll()
         scheduleSave()
-        Toast.makeText(this, "已删除第 ${idx + 1} 页", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this,
+            if (project.type == Project.TYPE_EXHIBITION) "已删除第 ${pos + 1} 面墙"
+            else "已删除第 ${pos + 1} 页", Toast.LENGTH_SHORT).show()
+    }
+
+    /** 新建自定义尺寸页面（摄影书）/ 新建墙体（展览）。 */
+    private fun addCustomSizePage() {
+        val isExh = project.type == Project.TYPE_EXHIBITION
+        PageSizeDialog.show(this,
+            if (isExh) "新建墙体尺寸" else "新建自定义页面尺寸",
+            project.pageWmm, project.pageHmm) { w, h ->
+            project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h, bg = page().bg))
+            pageIndex += 1
+            refreshAll()
+            scheduleSave()
+            Toast.makeText(this,
+                if (isExh) "已新建墙体 ${w.toInt()}×${h.toInt()}mm"
+                else "已新建页面 ${w.toInt()}×${h.toInt()}mm", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 修改当前页/墙尺寸。 */
+    private fun pageSettings() {
+        val pg = page()
+        val isExh = project.type == Project.TYPE_EXHIBITION
+        PageSizeDialog.show(this,
+            if (isExh) "墙体尺寸" else "页面尺寸",
+            pg.widthMm(project), pg.heightMm(project)) { w, h ->
+            pg.wmm = w; pg.hmm = h
+            canvas.invalidateLayout()
+            strip.refresh()
+            scheduleSave()
+            Toast.makeText(this, "尺寸已更新为 ${w.toInt()}×${h.toInt()}mm",
+                Toast.LENGTH_SHORT).show()
+        }
     }
 
     private fun selected(): Item? = canvas.selected
@@ -483,7 +445,6 @@ class EditorActivity : AppCompatActivity() {
         if (canvas.selected != null && canvas.activeIndex != pageIndex) {
             pageIndex = canvas.activeIndex
             strip.setCurrent(pageIndex)
-            strip.setCurrent(pageIndex)
         }
         updatePageLabel()
         val inCrop = canvas.cropItem != null
@@ -493,10 +454,10 @@ class EditorActivity : AppCompatActivity() {
             val it = canvas.selected!!
             // 裁剪按钮只对照片有效；编辑对文字/色块有效 —— 动态调整第一个按钮文案
             (selectionBar.getChildAt(0) as LinearLayout).let { row ->
-                (row.getChildAt(0) as TextView).visibility =
-                    if (it.type == Item.TYPE_PHOTO) View.VISIBLE else View.GONE
-                (row.getChildAt(1) as TextView).visibility =
-                    if (it.type == Item.TYPE_PHOTO) View.GONE else View.VISIBLE
+                val isPhoto = it.type == Item.TYPE_PHOTO
+                (row.getChildAt(0) as TextView).visibility = if (isPhoto) View.VISIBLE else View.GONE
+                (row.getChildAt(1) as TextView).visibility = if (isPhoto) View.VISIBLE else View.GONE
+                (row.getChildAt(2) as TextView).visibility = if (isPhoto) View.GONE else View.VISIBLE
             }
         }
     }
@@ -514,13 +475,15 @@ class EditorActivity : AppCompatActivity() {
     // ---------- 菜单 ----------
 
     private fun showMenu() {
-        val options = arrayOf("项目设置", "导出 PDF", "导出工程文件 (.folio)")
+        val pageItem = if (project.type == Project.TYPE_EXHIBITION) "墙体设置" else "页面设置"
+        val options = arrayOf("项目设置", pageItem, "导出 PDF", "导出工程文件 (.folio)")
         AlertDialog.Builder(this)
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> projectSettings()
-                    1 -> exportPdf()
-                    2 -> exportBundle()
+                    1 -> pageSettings()
+                    2 -> exportPdf()
+                    3 -> exportBundle()
                 }
             }.show()
     }
@@ -662,7 +625,8 @@ class EditorActivity : AppCompatActivity() {
         val aspect = if (opts.outWidth > 0 && opts.outHeight > 0)
             opts.outWidth.toFloat() / opts.outHeight else 1.5f
         val h = 0.45f
-        val w = (h * aspect * (project.pageHmm / project.pageWmm)).coerceIn(0.08f, 0.96f)
+        val pg = page()
+        val w = (h * aspect * (pg.heightMm(project) / pg.widthMm(project))).coerceIn(0.08f, 0.96f)
         val (cx, cy) = nextInsertSlot(order)
         val item = Item(
             type = Item.TYPE_PHOTO, imgId = imgId,

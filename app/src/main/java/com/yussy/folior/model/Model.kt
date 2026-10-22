@@ -55,12 +55,17 @@ data class Project(
 data class Page(
     var id: String = UUID.randomUUID().toString(),
     var bg: String? = null,
+    /** 页级尺寸覆盖（摄影书自定义页 / 展览墙体），null = 使用项目默认 */
+    var wmm: Float? = null,
+    var hmm: Float? = null,
     var items: MutableList<Item> = mutableListOf()
 ) {
     companion object {
         fun fromJson(o: JSONObject): Page {
             val p = Page(id = o.optString("id", UUID.randomUUID().toString()))
             p.bg = if (o.isNull("bg")) null else o.optString("bg")
+            p.wmm = if (o.isNull("wmm")) null else o.optDouble("wmm").toFloat()
+            p.hmm = if (o.isNull("hmm")) null else o.optDouble("hmm").toFloat()
             val arr = o.optJSONArray("items") ?: JSONArray()
             for (i in 0 until arr.length()) p.items.add(Item.fromJson(arr.getJSONObject(i)))
             return p
@@ -70,12 +75,17 @@ data class Page(
     fun toJson(): JSONObject {
         val o = JSONObject()
         o.put("id", id); o.put("bg", bg ?: JSONObject.NULL)
+        o.put("wmm", wmm ?: JSONObject.NULL); o.put("hmm", hmm ?: JSONObject.NULL)
         val arr = JSONArray()
         items.forEach { arr.put(it.toJson()) }
         o.put("items", arr)
         return o
     }
 }
+
+/** 页面实际宽高（mm）：页级覆盖优先，回退项目默认 */
+fun Page.widthMm(project: Project): Float = wmm ?: project.pageWmm
+fun Page.heightMm(project: Project): Float = hmm ?: project.pageHmm
 
 data class Item(
     var id: String = UUID.randomUUID().toString(),
@@ -89,6 +99,8 @@ data class Item(
     var cropCx: Float = 0.5f,        // 裁切中心（图像归一化坐标）
     var cropCy: Float = 0.5f,
     var frameStroke: Boolean = false,
+    /** 简易装裱：null=无 / "mat"=卡纸 / "frame"=木框 */
+    var frameStyle: String? = null,
     // text
     var text: String = "",
     var fontScale: Float = 0.04f,    // 字号 = 页高的比例
@@ -119,6 +131,7 @@ data class Item(
             it.cropCx = o.optDouble("cropCx", 0.5).toFloat()
             it.cropCy = o.optDouble("cropCy", 0.5).toFloat()
             it.frameStroke = o.optBoolean("frameStroke", false)
+            it.frameStyle = if (o.isNull("frameStyle")) null else o.optString("frameStyle")
             it.text = o.optString("text", "")
             it.fontScale = o.optDouble("fontScale", 0.04).toFloat()
             it.color = o.optString("color", "#1A1A18")
@@ -142,6 +155,7 @@ data class Item(
         o.put("cropZoom", cropZoom.toDouble())
         o.put("cropCx", cropCx.toDouble()); o.put("cropCy", cropCy.toDouble())
         o.put("frameStroke", frameStroke)
+        o.put("frameStyle", frameStyle ?: JSONObject.NULL)
         o.put("text", text)
         o.put("fontScale", fontScale.toDouble())
         o.put("color", color); o.put("bold", bold); o.put("italic", italic)

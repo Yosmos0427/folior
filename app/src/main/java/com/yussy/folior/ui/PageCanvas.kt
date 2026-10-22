@@ -59,6 +59,8 @@ class PageCanvas @JvmOverloads constructor(
     private var multiInitialAngle = 0f
     private var multiInitialW = 0f
     private var multiInitialH = 0f
+    private var multiInitialX = 0f
+    private var multiInitialY = 0f
     private var multiInitialRot = 0f
     private var multiActive = false
 
@@ -182,26 +184,38 @@ class PageCanvas @JvmOverloads constructor(
         val vw = width.toFloat(); val vh = height.toFloat()
         val d = resources.displayMetrics.density
         val margin = 22f * d
-        val aspect = p.pageWmm / p.pageHmm
+
+        // 每页可有独立尺寸（自定义页 / 墙体）
+        fun aspectOf(idx: Int): Float {
+            val pg = p.pages.getOrNull(idx)
+            return (pg?.wmm ?: p.pageWmm) / (pg?.hmm ?: p.pageHmm)
+        }
 
         if (spreadMode) {
             val gutter = 3f * d
-            var ph = vh - margin * 2
-            var pw = ph * aspect
-            val availW = vw - margin * 2 - gutter
-            if (pw * 2 > availW) { pw = availW / 2f; ph = pw / aspect }
+            val halfW = (vw - margin * 2 - gutter) / 2f
+            val maxPh = vh - margin * 2
             val cy = vh / 2f
+            fun fit(aspect: Float): Pair<Float, Float> {
+                var pw = halfW
+                var ph = pw / aspect
+                if (ph > maxPh) { ph = maxPh; pw = ph * aspect }
+                return pw to ph
+            }
             if (leftIndex in 0 until p.pages.size) {
+                val (pw, ph) = fit(aspectOf(leftIndex))
                 slots.add(Slot(leftIndex, RectF(
                     vw / 2f - gutter / 2f - pw, cy - ph / 2f,
                     vw / 2f - gutter / 2f, cy + ph / 2f)))
             }
             if (rightIndex in 0 until p.pages.size) {
+                val (pw, ph) = fit(aspectOf(rightIndex))
                 slots.add(Slot(rightIndex, RectF(
                     vw / 2f + gutter / 2f, cy - ph / 2f,
                     vw / 2f + gutter / 2f + pw, cy + ph / 2f)))
             }
         } else {
+            val aspect = aspectOf(activeIndex)
             var pw = vw - margin * 2
             var ph = pw / aspect
             if (ph > vh - margin * 2) { ph = vh - margin * 2; pw = ph * aspect }
@@ -401,6 +415,7 @@ class PageCanvas @JvmOverloads constructor(
                         multiInitialDist = dist(ev)
                         multiInitialAngle = angle(ev)
                         multiInitialW = it.w; multiInitialH = it.h
+                        multiInitialX = it.x; multiInitialY = it.y
                         multiInitialRot = it.rotation
                         dragging = false
                     }
@@ -412,8 +427,13 @@ class PageCanvas @JvmOverloads constructor(
                     val it = selected!!
                     val scale = dist(ev) / multiInitialDist
                     val deltaAngle = Math.toDegrees((angle(ev) - multiInitialAngle).toDouble()).toFloat()
+                    // 以图像中心为锚点缩放：保持中心不动
+                    val cx0 = multiInitialX + multiInitialW / 2f
+                    val cy0 = multiInitialY + multiInitialH / 2f
                     it.w = (multiInitialW * scale).coerceIn(0.02f, 4f)
                     it.h = (multiInitialH * scale).coerceIn(0.02f, 4f)
+                    it.x = cx0 - it.w / 2f
+                    it.y = cy0 - it.h / 2f
                     it.rotation = snapAngle(multiInitialRot + deltaAngle)
                     invalidate()
                 } else if (dragging && selected != null) {

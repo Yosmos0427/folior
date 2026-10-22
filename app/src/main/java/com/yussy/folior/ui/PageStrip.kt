@@ -1,5 +1,6 @@
 package com.yussy.folior.ui
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.ColorStateList
 import android.graphics.Color
@@ -7,6 +8,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.RippleDrawable
 import android.util.AttributeSet
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -17,13 +19,16 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.yussy.folior.model.Project
+import com.yussy.folior.model.heightMm
+import com.yussy.folior.model.widthMm
 
 /**
- * 页面预览栏（复合控件）：
+ * 页面预览栏：
  *   [ 固定「圆圈加号」按钮区 ] + [ 可滚动页面缩略图列表 ]
- * - 竖屏：横向栏，按钮区固定在左端；单元格为「缩略图在上、序号在下」
- * - 横屏：纵向栏，按钮区固定在顶端；单元格为「缩略图在左、序号在右」，更紧凑
- * 缩略图尺寸按栏内可用空间自适应，保持页面比例。
+ * - 竖屏横向栏：缩略图在上、序号在下；**上滑呼出删除按钮**
+ * - 横屏纵向栏：缩略图在左、序号在右；**右滑呼出删除按钮**
+ * - 长按拖动调整页序（ItemTouchHelper）
+ * 缩略图按各页自身宽高比自适应。
  */
 class PageStrip @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
@@ -38,18 +43,14 @@ class PageStrip @JvmOverloads constructor(
     var onPageReordered: ((Int) -> Unit)? = null
     var onPageAdded: (() -> Unit)? = null
 
-    /** 长按拖拽页面时的回调：屏幕坐标，供外层做"拖到删除框"判定 */
-    var onDragStart: ((pageId: String) -> Unit)? = null
-    var onDragMove: ((x: Float, y: Float) -> Unit)? = null
-    var onDragEnd: ((pageId: String, x: Float, y: Float) -> Unit)? = null
+    /** 滑动呼出删除按钮后点击删除：参数为页索引 */
+    var onStripDelete: ((Int) -> Unit)? = null
 
-    private var draggedPageId: String? = null
-    private var lastDragX = 0f
-    private var lastDragY = 0f
+    private var revealedPos = -1
 
     private val thumbCache = HashMap<String, android.graphics.Bitmap>()
-    private var cellW = 0
-    private var cellH = 0
+    private var availW = 0
+    private var availH = 0
 
     private val stripAdapter = StripAdapter()
     private val rv: RecyclerView
@@ -62,13 +63,12 @@ class PageStrip @JvmOverloads constructor(
         setBackgroundColor(0xFFFAFAF7.toInt())
         val d = resources.displayMetrics.density
 
-        // ---- 固定按钮区（独立于滚动容器）----
         addArea = FrameLayout(context).apply {
             setBackground(RippleDrawable(
                 ColorStateList.valueOf(0x141A1A18),
                 GradientDrawable().apply { setColor(Color.TRANSPARENT) },
                 null))
-            contentDescription = "新增空白页"
+            contentDescription = "新增"
             isClickable = true
             isFocusable = true
             setOnClickListener { onPageAdded?.invoke() }
@@ -83,7 +83,6 @@ class PageStrip @JvmOverloads constructor(
 
         divider = View(context).apply { setBackgroundColor(0xFFE6E6E0.toInt()) }
 
-        // ---- 滚动列表 ----
         rv = RecyclerView(context).apply {
             layoutManager = LinearLayoutManager(context, LinearLayoutManager.HORIZONTAL, false)
             adapter = stripAdapter
@@ -95,6 +94,7 @@ class PageStrip @JvmOverloads constructor(
         addView(divider)
         addView(rv, LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
 
+        // 长按拖动 = 调整页序（不做滑动删除，删除走"滑动呼出按钮"）
         val ith = ItemTouchHelper(object : ItemTouchHelper.Callback() {
             override fun getMovementFlags(r: RecyclerView, vh: RecyclerView.ViewHolder): Int =
                 if (verticalMode)
@@ -121,12 +121,10 @@ class PageStrip @JvmOverloads constructor(
                 if (actionState == ItemTouchHelper.ACTION_STATE_DRAG && vh != null) {
                     vh.itemView.alpha = 0.55f
                     vh.itemView.scaleX = 1.04f; vh.itemView.scaleY = 1.04f
-                    draggedPageId = project?.pages?.getOrNull(vh.bindingAdapterPosition)?.id
-                    val loc = IntArray(2)
-                    vh.itemView.getLocationOnScreen(loc)
-                    lastDragX = loc[0] + vh.itemView.width / 2f
-                    lastDragY = loc[1] + vh.itemView.height / 2f
-                    draggedPageId?.let { onDragStart?.invoke(it) }
+                    if (revealedPos == vh.bindingAdapterPosition) {
+                        revealedPos = -1
+                        stripAdapter.notifyDataSetChanged()
+                    }
                 }
             }
 
@@ -134,23 +132,7 @@ class PageStrip @JvmOverloads constructor(
                 super.clearView(r, vh)
                 vh.itemView.alpha = 1f
                 vh.itemView.scaleX = 1f; vh.itemView.scaleY = 1f
-                draggedPageId?.let { onDragEnd?.invoke(it, lastDragX, lastDragY) }
-                draggedPageId = null
                 onPageReordered?.invoke(currentIndex)
-            }
-
-            override fun onChildDraw(
-                c: android.graphics.Canvas, r: RecyclerView, vh: RecyclerView.ViewHolder,
-                dX: Float, dY: Float, actionState: Int, isCurrentlyActive: Boolean
-            ) {
-                if (isCurrentlyActive && vh.bindingAdapterPosition >= 0) {
-                    val loc = IntArray(2)
-                    vh.itemView.getLocationOnScreen(loc)
-                    lastDragX = loc[0] + vh.itemView.width / 2f + dX
-                    lastDragY = loc[1] + vh.itemView.height / 2f + dY
-                    onDragMove?.invoke(lastDragX, lastDragY)
-                }
-                super.onChildDraw(c, r, vh, dX, dY, actionState, isCurrentlyActive)
             }
         })
         ith.attachToRecyclerView(rv)
@@ -165,8 +147,8 @@ class PageStrip @JvmOverloads constructor(
             context,
             if (vertical) LinearLayoutManager.VERTICAL else LinearLayoutManager.HORIZONTAL,
             false)
-        // 两种方向的单元格结构不同，必须丢弃旧 ViewHolder
         rv.recycledViewPool.clear()
+        revealedPos = -1
         applyMode()
         refresh()
     }
@@ -175,14 +157,12 @@ class PageStrip @JvmOverloads constructor(
         val d = resources.displayMetrics.density
         orientation = if (verticalMode) VERTICAL else HORIZONTAL
         if (verticalMode) {
-            // 竖栏：按钮区在顶部（紧凑 44dp）
             addArea.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, (44 * d).toInt())
             divider.layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, Math.max(1, (0.7f * d).toInt()))
             (rv.layoutParams as LayoutParams).apply { width = LayoutParams.MATCH_PARENT; height = 0; weight = 1f }
             rv.setPadding((3 * d).toInt(), (2 * d).toInt(), (3 * d).toInt(), (2 * d).toInt())
             addIcon.layoutParams = FrameLayout.LayoutParams((22 * d).toInt(), (22 * d).toInt(), Gravity.CENTER)
         } else {
-            // 横栏：按钮区在左端（紧凑 68dp）
             addArea.layoutParams = LayoutParams((68 * d).toInt(), LayoutParams.MATCH_PARENT)
             divider.layoutParams = LayoutParams(Math.max(1, (0.7f * d).toInt()), LayoutParams.MATCH_PARENT)
             (rv.layoutParams as LayoutParams).apply { width = 0; height = LayoutParams.MATCH_PARENT; weight = 1f }
@@ -194,45 +174,27 @@ class PageStrip @JvmOverloads constructor(
         rv.requestLayout()
     }
 
-    /** 依据可用空间计算缩略图尺寸（保持页面比例）。 */
-    private fun computeCellSize() {
-        val p = project ?: return
-        if (rv.width == 0 || rv.height == 0) return
+    private fun computeAvail() {
         val d = resources.displayMetrics.density
-        val aspect = p.pageWmm / p.pageHmm
+        if (rv.width == 0 || rv.height == 0) return
         if (!verticalMode) {
-            // 横栏：高度决定尺寸，底部留序号
-            val availH = rv.height - rv.paddingTop - rv.paddingBottom - (17 * d).toInt()
-            var h = availH.coerceAtLeast((24 * d).toInt())
-            var w = (h * aspect).toInt()
-            val maxW = (54 * d).toInt()
-            if (w > maxW) { w = maxW; h = (w / aspect).toInt() }
-            cellW = w; cellH = h
+            availH = rv.height - rv.paddingTop - rv.paddingBottom - (17 * d).toInt()
         } else {
-            // 竖栏：宽度决定尺寸，右侧留序号
-            val availW = rv.width - rv.paddingLeft - rv.paddingRight - (18 * d).toInt()
-            var w = availW.coerceAtMost((44 * d).toInt()).coerceAtLeast((18 * d).toInt())
-            var h = (w / aspect).toInt()
-            val maxH = (84 * d).toInt()
-            if (h > maxH) { h = maxH; w = (h * aspect).toInt() }
-            cellW = w; cellH = h
+            availW = rv.width - rv.paddingLeft - rv.paddingRight - (22 * d).toInt()
         }
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         post {
-            val oldW = cellW; val oldH = cellH
-            computeCellSize()
-            if (oldW != cellW || oldH != cellH) {
-                thumbCache.clear()
-                stripAdapter.notifyDataSetChanged()
-            }
+            computeAvail()
+            thumbCache.clear()
+            stripAdapter.notifyDataSetChanged()
         }
     }
 
     fun refresh() {
-        computeCellSize()
+        computeAvail()
         thumbCache.clear()
         stripAdapter.notifyDataSetChanged()
         post { rv.scrollToPosition(currentIndex.coerceIn(0, (project?.pages?.size ?: 1) - 1)) }
@@ -243,43 +205,70 @@ class PageStrip @JvmOverloads constructor(
         stripAdapter.notifyDataSetChanged()
     }
 
+    /** 删除完成 / 切页后由外部调用，收起删除按钮 */
+    fun hideReveal() {
+        if (revealedPos >= 0) {
+            revealedPos = -1
+            stripAdapter.notifyDataSetChanged()
+        }
+    }
+
+    private fun revealPx(): Float {
+        val d = resources.displayMetrics.density
+        return if (verticalMode) 38f * d else 42f * d
+    }
+
+    private fun selectFromStrip(pos: Int) {
+        currentIndex = pos
+        onPageSelected?.invoke(pos)
+        stripAdapter.notifyDataSetChanged()
+    }
+
     // ---------------- 列表 ----------------
 
     inner class StripAdapter : RecyclerView.Adapter<StripVH>() {
+        override fun getItemViewType(position: Int): Int = if (verticalMode) 1 else 0
+
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): StripVH {
             val d = resources.displayMetrics.density
-            val cell = LinearLayout(context).apply {
-                orientation = if (verticalMode) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
+            val root = FrameLayout(context).apply {
                 if (verticalMode) setPadding(0, (4 * d).toInt(), 0, (4 * d).toInt())
                 else setPadding((4 * d).toInt(), 0, (4 * d).toInt(), 0)
             }
-            cell.layoutParams = RecyclerView.LayoutParams(
+            root.layoutParams = RecyclerView.LayoutParams(
                 if (verticalMode) RecyclerView.LayoutParams.MATCH_PARENT
                 else RecyclerView.LayoutParams.WRAP_CONTENT,
                 if (verticalMode) RecyclerView.LayoutParams.WRAP_CONTENT
                 else RecyclerView.LayoutParams.MATCH_PARENT)
-            return StripVH(cell)
+            return StripVH(root)
         }
 
         override fun getItemCount(): Int = project?.pages?.size ?: 0
-
-        override fun getItemViewType(position: Int): Int = if (verticalMode) 1 else 0
 
         override fun onBindViewHolder(holder: StripVH, pos: Int) {
             val p = project ?: return
             val page = p.pages.getOrNull(pos) ?: return
             val d = resources.displayMetrics.density
-            if (cellW <= 0 || cellH <= 0) computeCellSize()
-            val thumbW = cellW.coerceAtLeast(8)
-            val thumbH = cellH.coerceAtLeast(8)
+            if (availH == 0 || availW == 0) computeAvail()
 
-            val lp = holder.thumb.layoutParams as LayoutParams
-            lp.width = thumbW
-            lp.height = thumbH
-            holder.thumb.layoutParams = lp
+            // 缩略图尺寸：按本页宽高比自适应
+            val aspect = page.widthMm(p) / page.heightMm(p)
+            var w: Int; var h: Int
+            if (!verticalMode) {
+                h = availH.coerceAtLeast((16 * d).toInt())
+                w = (h * aspect).toInt()
+                val maxW = (54 * d).toInt()
+                if (w > maxW) { w = maxW; h = (w / aspect).toInt() }
+            } else {
+                w = availW.coerceAtMost((44 * d).toInt()).coerceAtLeast((14 * d).toInt())
+                h = (w / aspect).toInt()
+                val maxH = (84 * d).toInt()
+                if (h > maxH) { h = maxH; w = (h * aspect).toInt() }
+            }
+            holder.thumb.layoutParams = LinearLayout.LayoutParams(
+                w.coerceAtLeast(8), h.coerceAtLeast(8))
 
-            val key = "${page.id}_${thumbW}x$thumbH"
+            val key = "${page.id}_${w}x$h"
             val cached = thumbCache[key]
             if (cached != null) {
                 holder.thumb.setImageBitmap(cached)
@@ -287,7 +276,7 @@ class PageStrip @JvmOverloads constructor(
                 holder.thumb.setImageBitmap(null)
                 holder.thumb.post {
                     if (project === p && p.pages.getOrNull(holder.bindingAdapterPosition) === page) {
-                        val bmp = PageRenderer.renderThumb(context, p, page, thumbW, thumbH)
+                        val bmp = PageRenderer.renderThumb(context, p, page, w, h)
                         thumbCache[key] = bmp
                         holder.thumb.setImageBitmap(bmp)
                     }
@@ -306,29 +295,110 @@ class PageStrip @JvmOverloads constructor(
             holder.badge.setTextColor(
                 if (pos == currentIndex) 0xFFB5442A.toInt() else 0xFF8A8A84.toInt())
             holder.badge.width = (16 * d).toInt()
-            holder.badge.setPadding(
-                if (verticalMode) (3 * d).toInt() else 0, 0, 0, 0)
+            holder.badge.setPadding(if (verticalMode) (3 * d).toInt() else 0, 0, 0, 0)
 
-            holder.itemView.setOnClickListener {
-                currentIndex = pos
-                onPageSelected?.invoke(pos)
-                setCurrent(pos)
+            // 滑动呼出删除按钮的状态
+            val revealed = revealedPos == pos
+            val reveal = revealPx()
+            holder.content.translationY = if (revealed && !verticalMode) -reveal else 0f
+            holder.content.translationX = if (revealed && verticalMode) reveal else 0f
+            holder.deleteBtn.visibility = if (revealed) View.VISIBLE else View.INVISIBLE
+            holder.deleteBtn.setOnClickListener {
+                val pp = holder.bindingAdapterPosition
+                if (pp >= 0) onStripDelete?.invoke(pp)
             }
         }
     }
 
-    inner class StripVH(cell: LinearLayout) : RecyclerView.ViewHolder(cell) {
-        val thumb = ImageView(context).apply {
+    @SuppressLint("ClickableViewAccessibility")
+    inner class StripVH(root: FrameLayout) : RecyclerView.ViewHolder(root) {
+        val content: LinearLayout
+        val thumb: ImageView = ImageView(context).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
-        val badge = TextView(context).apply {
+        val badge: TextView = TextView(context).apply {
             textSize = 9.5f
             gravity = if (verticalMode) Gravity.CENTER_VERTICAL or Gravity.START else Gravity.CENTER
         }
+        val deleteBtn: ImageView
+
+        private var downX = 0f
+        private var downY = 0f
+        private var moved = false
 
         init {
-            cell.addView(thumb)
-            cell.addView(badge)
+            val d = resources.displayMetrics.density
+            content = LinearLayout(context).apply {
+                orientation = if (verticalMode) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            }
+            content.addView(thumb)
+            content.addView(badge)
+
+            deleteBtn = ImageView(context).apply {
+                setImageResource(com.yussy.folior.R.drawable.ic_trash)
+                setColorFilter(0xFFB5442A.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
+                background = GradientDrawable().apply {
+                    shape = GradientDrawable.OVAL
+                    setColor(0x1FB5442A)
+                }
+                contentDescription = "删除页面"
+                val side = (34 * d).toInt()
+                layoutParams = FrameLayout.LayoutParams(side, side,
+                    if (verticalMode) Gravity.START or Gravity.CENTER_VERTICAL
+                    else Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            }
+            root.addView(deleteBtn)
+            root.addView(content)
+
+            content.setOnTouchListener { _, ev ->
+                val pos = bindingAdapterPosition
+                if (pos == RecyclerView.NO_POSITION) return@setOnTouchListener false
+                val reveal = revealPx()
+                val slop = 4f * d
+                when (ev.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downX = ev.x; downY = ev.y; moved = false
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val delta = if (verticalMode) ev.x - downX else ev.y - downY
+                        // 横向栏：上滑（负值）；纵向栏：右滑（正值）
+                        val t = if (verticalMode) delta.coerceIn(0f, reveal)
+                               else delta.coerceIn(-reveal, 0f)
+                        if (moved || Math.abs(t) > slop) {
+                            moved = true
+                            if (verticalMode) content.translationX = t
+                            else content.translationY = t
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        applyRevealState(pos)
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val delta = if (verticalMode) ev.x - downX else ev.y - downY
+                        if (!moved) {
+                            if (revealedPos == pos) hideReveal() else selectFromStrip(pos)
+                        } else {
+                            if (Math.abs(delta) > reveal * 0.45f) revealedPos = pos
+                            stripAdapter.notifyDataSetChanged()
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
+        }
+
+        private fun applyRevealState(pos: Int) {
+            val revealed = revealedPos == pos
+            val reveal = revealPx()
+            content.translationY = if (revealed && !verticalMode) -reveal else 0f
+            content.translationX = if (revealed && verticalMode) reveal else 0f
         }
     }
 }

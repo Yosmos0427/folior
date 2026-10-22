@@ -92,11 +92,35 @@ object PageRenderer {
                     canvas.restore()
                     return
                 }
-                if (isExhibition) drawShadow(canvas, fl, fT, fw, fh, 18f)
+                val frame = item.frameStyle
+                if (isExhibition || frame != null) drawShadow(canvas, fl, fT, fw, fh, 18f)
+                when (frame) {
+                    "mat" -> {
+                        // 卡纸装裱：四周留白衬纸
+                        val m = Math.min(fw, fh) * 0.055f
+                        p.style = Paint.Style.FILL
+                        p.color = 0xFFFDFCF8.toInt()
+                        canvas.drawRect(fl - m, fT - m, fl + fw + m, fT + fh + m, p)
+                    }
+                    "frame" -> {
+                        // 木框装裱
+                        val t = Math.min(fw, fh) * 0.03f
+                        p.style = Paint.Style.FILL
+                        p.color = 0xFF2B2A26.toInt()
+                        canvas.drawRect(fl - t, fT - t, fl + fw + t, fT + fh + t, p)
+                    }
+                }
                 canvas.save()
                 canvas.clipRect(fl, fT, fl + fw, fT + fh)
                 drawCroppedBitmap(canvas, bmp, item, fl, fT, fw, fh, highQuality)
                 canvas.restore()
+                if (frame != null) {
+                    // 装裱内侧细边线
+                    p.style = Paint.Style.STROKE
+                    p.strokeWidth = Math.max(1f, Math.min(fw, fh) * 0.004f)
+                    p.color = 0x2E000000
+                    canvas.drawRect(fl, fT, fl + fw, fT + fh, p)
+                }
                 if (item.frameStroke) {
                     p.style = Paint.Style.STROKE
                     p.strokeWidth = Math.max(1f, wPx * 0.0015f)

@@ -58,6 +58,9 @@ object ProjectDialog {
         }
         root.addView(titleInput)
 
+        // 尺寸区标签（类型切换时联动改文案，故提前创建）
+        val sizeLabel = sectionLabel(ctx, "页面尺寸")
+
         // ---------- 类型（二选一） ----------
         root.addView(sectionLabel(ctx, "类型"))
         var type = if (initType == "exhibition") "exhibition" else "book"
@@ -76,13 +79,14 @@ object ProjectDialog {
         fun renderType() {
             styleType(bookBtn, type == "book")
             styleType(exhBtn, type == "exhibition")
+            sizeLabel.text = if (type == "book") "页面尺寸" else "墙体大小"
         }
         bookBtn.setOnClickListener { type = "book"; renderType() }
         exhBtn.setOnClickListener { type = "exhibition"; renderType() }
         renderType()
 
-        // ---------- 页面尺寸 ----------
-        root.addView(sectionLabel(ctx, "页面尺寸"))
+        // ---------- 页面尺寸 / 墙体大小（随类型切换） ----------
+        root.addView(sizeLabel)
         val sizeRow = LinearLayout(ctx).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL

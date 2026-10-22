@@ -8,19 +8,15 @@ import android.os.Handler
 import android.os.Looper
 import com.yussy.folior.model.Project
 import java.io.OutputStream
+import kotlin.math.max
 
 /**
- * PDF 导出。
+ * PDF 导出（支持每页独立尺寸：自定义页 / 墙体）。
  * 三种版式：
- *  1) 单页标准：每页一个 PDF 页，尺寸 = 项目真实尺寸
- *  2) 单页 + 首页空白：在最前插入一张空白页，使封面落在双页视图的右半页，
- *     修正阅读器「第 1 页默认放左」造成的整本错位（推荐）
- *  3) 双页合并：每个 PDF 页 = 一组对开页（宽 = 2 倍页宽）
- *
- * 性能要点：
- *  - 图片按成品 300dpi 下的实际占版尺寸解码（pxHint），不做无意义的超大图解码
- *  - 相邻页只补画真正越界（跨页）的元素，避免把整页内容重复嵌入三次
- *  - 进度分为「渲染页面」与「写入文件」两个阶段，避免 100% 后长时间无反馈
+ *  1) 单页标准：每页一个 PDF 页，尺寸 = 该页实际尺寸
+ *  2) 单页 + 首页空白：修正双页视图「第 1 页默认放左」造成的错位（推荐）
+ *  3) 双页合并：每个 PDF 页 = 一组对开页
+ * 性能：图片按成品 300dpi 占版尺寸解码；相邻页只续画真正越界的元素。
  */
 object PdfExporter {
 
@@ -35,7 +31,6 @@ object PdfExporter {
         fun onDone(ok: Boolean, error: String?)
     }
 
-    /** 与编辑器一致的书籍配对：封面单右、中间 (2,3)(4,5)…、封底单左。 */
     private fun spreadsOf(n: Int): List<Pair<Int, Int>> {
         if (n <= 0) return listOf(-1 to 0)
         val res = mutableListOf(-1 to 0)
@@ -47,8 +42,13 @@ object PdfExporter {
         return res
     }
 
-    /** 页宽（pt）→ 300dpi 下的像素宽，用于决定图片解码尺寸。 */
-    private fun pxAt300(pageWidthPt: Float): Int = (pageWidthPt / 72f * 300f).toInt()
+    private fun wPt(project: Project, page: com.yussy.folior.model.Page?): Float =
+        ((page?.wmm ?: project.pageWmm) / 25.4f * 72f)
+
+    private fun hPt(project: Project, page: com.yussy.folior.model.Page?): Float =
+        ((page?.hmm ?: project.pageHmm) / 25.4f * 72f)
+
+    private fun pxAt300(ptWidth: Float): Int = (ptWidth / 72f * 300f).toInt()
 
     fun export(ctx: Context, project: Project, out: OutputStream, opts: Options, progress: Progress) {
         Thread {
@@ -56,46 +56,34 @@ object PdfExporter {
             var err: String? = null
             try {
                 val doc = PdfDocument()
-                val pw = project.pageWmm / 25.4f * 72f   // mm → pt
-                val ph = project.pageHmm / 25.4f * 72f
                 val bg = com.yussy.folior.model.parseColor(project.defaultBg, Color.WHITE)
                 val handler = Handler(Looper.getMainLooper())
-                // 单页内元素的解码像素上限（按页宽 300dpi）
-                val pxHintSingle = pxAt300(pw)
 
                 if (opts.mergeSpreads) {
                     val spreads = spreadsOf(project.pages.size)
                     val total = spreads.size
                     spreads.forEachIndexed { idx, pair ->
+                        val pageL = if (pair.first >= 0) project.pages.getOrNull(pair.first) else null
+                        val pageR = if (pair.second >= 0) project.pages.getOrNull(pair.second) else null
+                        val wl = wPt(project, pageL); val hl = hPt(project, pageL)
+                        val wr = wPt(project, pageR); val hr = hPt(project, pageR)
+                        val H = max(hl, hr)
                         val info = PdfDocument.PageInfo.Builder(
-                            Math.round(pw * 2f), Math.round(ph), idx + 1).create()
+                            Math.round(wl + wr), Math.round(H), idx + 1).create()
                         val pdfPage = doc.startPage(info)
                         val c = pdfPage.canvas
-                        val leftRect = RectF(0f, 0f, pw, ph)
-                        val rightRect = RectF(pw, 0f, pw * 2f, ph)
-
-                        c.drawRect(leftRect, android.graphics.Paint().apply { color = bg })
-                        c.drawRect(rightRect, android.graphics.Paint().apply { color = bg })
-                        pair.first.takeIf { it >= 0 }?.let { i ->
-                            project.pages.getOrNull(i)?.let {
-                                PageRenderer.drawPageBackground(project, it, c, leftRect)
-                            }
-                        }
-                        pair.second.takeIf { it >= 0 }?.let { i ->
-                            project.pages.getOrNull(i)?.let {
-                                PageRenderer.drawPageBackground(project, it, c, rightRect)
-                            }
-                        }
-                        pair.first.takeIf { it >= 0 }?.let { i ->
-                            project.pages.getOrNull(i)?.let {
-                                PageRenderer.drawItems(ctx, project, it, c, leftRect, true, pxHintSingle)
-                            }
-                        }
-                        pair.second.takeIf { it >= 0 }?.let { i ->
-                            project.pages.getOrNull(i)?.let {
-                                PageRenderer.drawItems(ctx, project, it, c, rightRect, true, pxHintSingle)
-                            }
-                        }
+                        c.drawColor(bg)
+                        val leftRect = RectF(0f, (H - hl) / 2f, wl, (H + hl) / 2f)
+                        val rightRect = RectF(wl, (H - hr) / 2f, wl + wr, (H + hr) / 2f)
+                        pageL?.let { PageRenderer.drawPageBackground(project, it, c, leftRect) }
+                        pageR?.let { PageRenderer.drawPageBackground(project, it, c, rightRect) }
+                        c.save()
+                        c.clipRect(0f, 0f, wl + wr, H)
+                        pageL?.let {
+                            PageRenderer.drawItems(ctx, project, it, c, leftRect, true, pxAt300(wl)) }
+                        pageR?.let {
+                            PageRenderer.drawItems(ctx, project, it, c, rightRect, true, pxAt300(wr)) }
+                        c.restore()
                         doc.finishPage(pdfPage)
                         handler.post { progress.onProgress(idx + 1, total) }
                     }
@@ -104,10 +92,11 @@ object PdfExporter {
                     if (opts.insertBlankFirst) list.add(null)
                     list.addAll(project.pages)
                     val total = list.size
-                    val pr = RectF(0f, 0f, pw, ph)
                     val offset = if (opts.insertBlankFirst) 1 else 0
 
                     list.forEachIndexed { i, page ->
+                        val pw = wPt(project, page)
+                        val ph = hPt(project, page)
                         val info = PdfDocument.PageInfo.Builder(
                             Math.round(pw), Math.round(ph), i + 1).create()
                         val pdfPage = doc.startPage(info)
@@ -115,27 +104,28 @@ object PdfExporter {
                         if (page == null) {
                             canvas.drawColor(bg)
                         } else {
+                            val pr = RectF(0f, 0f, pw, ph)
                             PageRenderer.drawPageBackground(project, page, canvas, pr)
                             if (project.type == Project.TYPE_BOOK) {
                                 val realIdx = i - offset
-                                // 只补画真正越界到本页的元素（避免整页重复嵌入）
                                 project.pages.getOrNull(realIdx - 1)?.let { prev ->
-                                    drawOverflow(ctx, project, prev, canvas, pr,
-                                        toRight = true, pxHint = pxHintSingle)
+                                    drawOverflow(ctx, project, prev, canvas,
+                                        RectF(-wPt(project, prev), 0f, 0f, hPt(project, prev)),
+                                        toRight = true, pxHint = pxAt300(wPt(project, prev)))
                                 }
                                 project.pages.getOrNull(realIdx + 1)?.let { next ->
-                                    drawOverflow(ctx, project, next, canvas, pr,
-                                        toRight = false, pxHint = pxHintSingle)
+                                    drawOverflow(ctx, project, next, canvas,
+                                        RectF(pw, 0f, pw + wPt(project, next), hPt(project, next)),
+                                        toRight = false, pxHint = pxAt300(wPt(project, next)))
                                 }
                             }
-                            PageRenderer.drawItems(ctx, project, page, canvas, pr, true, pxHintSingle)
+                            PageRenderer.drawItems(ctx, project, page, canvas, pr, true, pxAt300(pw))
                         }
                         doc.finishPage(pdfPage)
                         handler.post { progress.onProgress(i + 1, total) }
                     }
                 }
 
-                // 第二阶段：写入文件（进度条已满但仍在工作，需要明确提示）
                 handler.post { progress.onStage("正在写入文件…") }
                 out.use {
                     doc.writeTo(it)
@@ -154,21 +144,11 @@ object PdfExporter {
         }.start()
     }
 
-    /**
-     * 把相邻页中越界（跨书脊）的元素补画到当前页。
-     * toRight=true 表示相邻页在左侧，其 x+w>1 的部分溢出到本页；
-     * toRight=false 表示相邻页在右侧，其 x<0 的部分溢出到本页。
-     */
+    /** 把相邻页中真正越界（跨书脊）的元素补画到当前页。 */
     private fun drawOverflow(
         ctx: Context, project: Project, neighbor: com.yussy.folior.model.Page,
-        canvas: android.graphics.Canvas, pr: RectF, toRight: Boolean, pxHint: Int
+        canvas: android.graphics.Canvas, target: RectF, toRight: Boolean, pxHint: Int
     ) {
-        val target = RectF(
-            if (toRight) pr.left - pr.width() else pr.right,
-            pr.top,
-            if (toRight) pr.left else pr.right + pr.width(),
-            pr.bottom
-        )
         val items = neighbor.items.filter { it ->
             if (toRight) it.x + it.w > 1.0001f else it.x < -0.0001f
         }

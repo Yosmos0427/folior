@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.yussy.folior.model.*
 import com.yussy.folior.model.Project
 import com.yussy.folior.store.Store
 import com.yussy.folior.ui.PageRenderer
@@ -154,7 +155,7 @@ class ViewerActivity : AppCompatActivity() {
     private fun drawSingle(c: Canvas) {
         val page = project.pages.getOrNull(pageIndex) ?: return
         val vw = viewer.width.toFloat(); val vh = viewer.height.toFloat()
-        val aspect = project.pageWmm / project.pageHmm
+        val aspect = page.widthMm(project) / page.heightMm(project)
         var pw = vw * 0.92f
         var ph = pw / aspect
         if (ph > vh * 0.9f) { ph = vh * 0.9f; pw = ph * aspect }
@@ -168,25 +169,37 @@ class ViewerActivity : AppCompatActivity() {
         val (li, ri) = currentSpread()
         val vw = viewer.width.toFloat(); val vh = viewer.height.toFloat()
         val d = resources.displayMetrics.density
-        val aspect = project.pageWmm / project.pageHmm
         val gutter = 1.5f * d
 
-        var ph = vh * 0.84f
-        var pw = ph * aspect
         val availW = vw * 0.94f - gutter
-        if (pw * 2 > availW) { pw = availW / 2f; ph = pw / aspect }
+        val halfW = availW / 2f
+        val maxPh = vh * 0.84f
         val cy = vh / 2f - 6f * d
         val cx = vw / 2f
-        val leftRect = if (li >= 0) RectF(cx - gutter / 2f - pw, cy - ph / 2f, cx - gutter / 2f, cy + ph / 2f) else null
-        val rightRect = if (ri >= 0) RectF(cx + gutter / 2f, cy - ph / 2f, cx + gutter / 2f + pw, cy + ph / 2f) else null
+        fun fit(aspect: Float): Pair<Float, Float> {
+            var pw = halfW
+            var ph = pw / aspect
+            if (ph > maxPh) { ph = maxPh; pw = ph * aspect }
+            return pw to ph
+        }
+        val pageL = project.pages.getOrNull(li)
+        val pageR = project.pages.getOrNull(ri)
+        val aspectL = (pageL?.widthMm(project) ?: project.pageWmm) /
+                (pageL?.heightMm(project) ?: project.pageHmm)
+        val aspectR = (pageR?.widthMm(project) ?: project.pageWmm) /
+                (pageR?.heightMm(project) ?: project.pageHmm)
+        val (pwL, phL) = fit(aspectL)
+        val (pwR, phR) = fit(aspectR)
+        val leftRect = if (li >= 0)
+            RectF(cx - gutter / 2f - pwL, cy - phL / 2f, cx - gutter / 2f, cy + phL / 2f) else null
+        val rightRect = if (ri >= 0)
+            RectF(cx + gutter / 2f, cy - phR / 2f, cx + gutter / 2f + pwR, cy + phR / 2f) else null
 
         // 整本书的投影
-        val book = RectF(
-            leftRect?.left ?: (cx + gutter / 2f),
-            cy - ph / 2f,
-            rightRect?.right ?: (cx - gutter / 2f),
-            cy + ph / 2f)
-        drawShadow(c, book)
+        val book = RectF(Float.MAX_VALUE, Float.MAX_VALUE, -Float.MAX_VALUE, -Float.MAX_VALUE)
+        leftRect?.let { book.union(it) }
+        rightRect?.let { book.union(it) }
+        if (book.left != Float.MAX_VALUE) drawShadow(c, book)
 
         // 页面底色
         li.takeIf { it >= 0 }?.let { i ->
