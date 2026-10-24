@@ -86,6 +86,7 @@ class EditorActivity : AppCompatActivity() {
     companion object {
         const val REQ_PDF = 202
         const val REQ_BUNDLE = 203
+        const val REQ_PREVIEW = 204
         /** 展览常见展厅尺寸预设（米制） */
         val WALL_PRESETS = listOf(
             Triple("3×2m", 3000f, 2000f),
@@ -1181,6 +1182,7 @@ class EditorActivity : AppCompatActivity() {
             "墙体设置" to { resizeCurrentPage() }
         else "页面设置" to { resizeCurrentPage() })
         actions.add("导出 PDF" to { exportPdf() })
+        actions.add("导出项目预览" to { exportPreviewImage() })
         actions.add("导出工程文件 (.folio)" to { exportBundle() })
         AlertDialog.Builder(this)
             .setItems(actions.map { it.first }.toTypedArray()) { _, which ->
@@ -1521,6 +1523,54 @@ class EditorActivity : AppCompatActivity() {
 
     private var pdfOptions = PdfExporter.Options()
 
+    /** 通用进度对话框：阶段文字 + 水平进度条 */
+    private class ProgressUi(
+        val dialog: AlertDialog,
+        val msg: TextView,
+        val bar: android.widget.ProgressBar
+    )
+
+    private fun progressUi(title: String, initial: String): ProgressUi {
+        val msg = TextView(this).apply {
+            textSize = 12f
+            setTextColor(0xFF6B6B66.toInt())
+            setPadding(dp(20f), dp(4f), dp(20f), dp(10f))
+            text = initial
+        }
+        val bar = android.widget.ProgressBar(
+            this, null, android.R.attr.progressBarStyleHorizontal
+        ).apply {
+            max = 100
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { leftMargin = dp(20f); rightMargin = dp(20f) }
+        }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, dp(8f), 0, dp(4f))
+            addView(msg)
+            addView(bar)
+        }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(box)
+            .setCancelable(false)
+            .create()
+        dialog.show()
+        return ProgressUi(dialog, msg, bar)
+    }
+
+    /** 导出项目预览：全部页面/墙体按顺序平铺为一张白底图片 */
+    private fun exportPreviewImage() {
+        Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "image/png"
+            putExtra(Intent.EXTRA_TITLE, "${project.title}-预览.png")
+            startActivityForResult(this, REQ_PREVIEW)
+        }
+    }
+
     private fun exportPdf() {
         val items = arrayOf("单页", "双联", "单页 + 空白首页")
         AlertDialog.Builder(this)
@@ -1565,36 +1615,10 @@ class EditorActivity : AppCompatActivity() {
                     limitBytes = if (limitMb > 0) limitMb.toLong() * 1024L * 1024L else 0L
                 )
 
-                // ---- 进度对话框：阶段说明 + 百分比 + 水平进度条 ----
-                val msg = TextView(this).apply {
-                    textSize = 12f
-                    setTextColor(0xFF6B6B66.toInt())
-                    setPadding(dp(20f), dp(4f), dp(20f), dp(10f))
-                    text = "$dpi dpi · " +
-                        (if (limitMb > 0) "体积上限 $limitMb MB" else "体积不限")
-                }
-                val bar = android.widget.ProgressBar(
-                    this, null, android.R.attr.progressBarStyleHorizontal
-                ).apply {
-                    max = 100
-                    progress = 0
-                    layoutParams = LinearLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.WRAP_CONTENT
-                    ).apply { leftMargin = dp(20f); rightMargin = dp(20f) }
-                }
-                val box = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(0, dp(8f), 0, dp(4f))
-                    addView(msg)
-                    addView(bar)
-                }
-                val dialog = AlertDialog.Builder(this)
-                    .setTitle("正在导出 PDF")
-                    .setView(box)
-                    .setCancelable(false)
-                    .create()
-                dialog.show()
+                val ui = progressUi(
+                    "正在导出 PDF",
+                    "$dpi dpi · " + (if (limitMb > 0) "体积上限 $limitMb MB" else "体积不限")
+                )
 
                 Thread {
                     val tmpFile = java.io.File(cacheDir, "pdf_export_out.pdf")
@@ -1608,8 +1632,8 @@ class EditorActivity : AppCompatActivity() {
                                 object : PdfExporter.Progress {
                                     override fun onStage(text: String, percent: Int) {
                                         runOnUiThread {
-                                            msg.text = "$text  ·  $percent%"
-                                            bar.progress = percent
+                                            ui.msg.text = "$text  ·  $percent%"
+                                            ui.bar.progress = percent
                                         }
                                     }
 
@@ -1626,7 +1650,7 @@ class EditorActivity : AppCompatActivity() {
 
                     var writeErr: String? = null
                     if (ok) {
-                        runOnUiThread { msg.text = "正在写入文件…  ·  99%"; bar.progress = 99 }
+                        runOnUiThread { ui.msg.text = "正在写入文件…  ·  99%"; ui.bar.progress = 99 }
                         try {
                             val os = contentResolver.openOutputStream(uri)
                             if (os == null) writeErr = "无法写入目标文件"
@@ -1638,13 +1662,49 @@ class EditorActivity : AppCompatActivity() {
                     tmpFile.delete()
 
                     runOnUiThread {
-                        dialog.dismiss()
+                        ui.dialog.dismiss()
                         val fail = err ?: writeErr
                         if (fail != null) {
                             Toast.makeText(this, "导出失败：$fail", Toast.LENGTH_LONG).show()
                         } else if (note != null) {
                             // 成功但未能压到目标体积：告知实际结果
                             Toast.makeText(this, note, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                }.start()
+            }
+            REQ_PREVIEW -> {
+                val uri = data.data ?: return
+                if (project.pages.isEmpty()) {
+                    Toast.makeText(this, "项目中没有页面", Toast.LENGTH_SHORT).show()
+                    return
+                }
+                val ui = progressUi("正在生成预览图", "准备中…")
+                Thread {
+                    var err: String? = null
+                    try {
+                        val bmp = ProjectPreview.build(this, project) { done, total ->
+                            val pct = (done * 100 / total.coerceAtLeast(1)).coerceIn(0, 100)
+                            runOnUiThread {
+                                ui.msg.text = "渲染 $done / $total  ·  $pct%"
+                                ui.bar.progress = pct
+                            }
+                        }
+                        try {
+                            runOnUiThread { ui.msg.text = "正在写入图片…  ·  99%"; ui.bar.progress = 99 }
+                            val os = contentResolver.openOutputStream(uri)
+                                ?: throw IllegalStateException("无法写入目标文件")
+                            os.use { bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                        } finally {
+                            bmp.recycle()
+                        }
+                    } catch (t: Throwable) {
+                        err = t.message ?: t.javaClass.simpleName
+                    }
+                    runOnUiThread {
+                        ui.dialog.dismiss()
+                        if (err != null) {
+                            Toast.makeText(this, "导出失败：$err", Toast.LENGTH_LONG).show()
                         }
                     }
                 }.start()
