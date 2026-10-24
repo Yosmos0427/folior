@@ -348,7 +348,7 @@ class EditorActivity : AppCompatActivity() {
         }
         toolBtn("＋照片") { pickPhotos() }
         toolBtn("＋文字") { addText() }
-        toolBtn(if (project.type == Project.TYPE_EXHIBITION) "＋墙体" else "＋自定义页面") { addCustomSizePage() }
+        toolBtn(if (project.type == Project.TYPE_EXHIBITION) "＋墙体" else "＋页面") { addCustomSizePage() }
         toolBtn("绘制") { setDrawMode(!drawMode) }
         toolBtn("放映") { startActivity(Intent(this, ViewerActivity::class.java)
             .putExtra("id", project.id)
@@ -511,7 +511,7 @@ class EditorActivity : AppCompatActivity() {
             }
             rightDock.addView(tools, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-            relayoutButtons(tools, toolButtons, 4, land = true)
+            relayoutButtons(tools, toolButtons, 6, land = true)
             relayoutButtons(selectionBar, selButtons, 7, land = true)
             dockSecondary(land = true)
         } else {
@@ -530,7 +530,7 @@ class EditorActivity : AppCompatActivity() {
 
             // 竖屏：按固定顺序归位 top / bodyRow / 二级工具 / 工具条 / 预览栏
             restackPortrait()
-            relayoutButtons(tools, toolButtons, 4, land = false)
+            relayoutButtons(tools, toolButtons, 6, land = false, singleRow = true)
             relayoutButtons(selectionBar, selButtons, 7, land = false)
             dockSecondary(land = false)
         }
@@ -557,7 +557,8 @@ class EditorActivity : AppCompatActivity() {
         host: LinearLayout,
         buttons: List<TextView>,
         maxPerRow: Int,
-        land: Boolean
+        land: Boolean,
+        singleRow: Boolean = false
     ) {
         val d = resources.displayMetrics.density
         val padH = (5 * d).toInt()
@@ -574,8 +575,13 @@ class EditorActivity : AppCompatActivity() {
         if (pool.isEmpty()) return
 
         val n = pool.size
-        var rows = if (land) n else Math.ceil(n.toDouble() / maxPerRow).toInt().coerceAtLeast(1)
-        if (!land) {
+        // 横屏=单列；singleRow 强制一行（一级工具固定 6 项一行）；否则按上限分行
+        var rows = when {
+            land -> n
+            singleRow -> 1
+            else -> Math.ceil(n.toDouble() / maxPerRow).toInt().coerceAtLeast(1)
+        }
+        if (!land && !singleRow) {
             // 每行至少 3 个：行数过多时减少行数
             while (rows > 1 && n / rows < 3) rows--
         }
@@ -745,7 +751,7 @@ class EditorActivity : AppCompatActivity() {
             expandBtn.contentDescription = "展开看片台"
         }
         // 工具条成员变化（多/少一项）后重新分行
-        relayoutButtons(tools, toolButtons, 4, isLandscape())
+        relayoutButtons(tools, toolButtons, 6, isLandscape(), singleRow = !isLandscape())
     }
 
     @Suppress("DEPRECATION")
