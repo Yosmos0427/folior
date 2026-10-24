@@ -3,6 +3,7 @@ package com.yussy.folior
 import android.app.Activity
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
@@ -39,6 +40,13 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var canvasWrap: android.widget.FrameLayout
     private lateinit var sideStripWrap: LinearLayout
     private lateinit var bottomStripWrap: LinearLayout
+    // 看片台（全工作区平铺排序）
+    private lateinit var rootFrame: android.widget.FrameLayout
+    private lateinit var topBar: View
+    private lateinit var lightTableHost: android.widget.FrameLayout
+    private lateinit var lightTable: LightTable
+    private lateinit var expandBtn: TextView
+    private var lightTableOpen = false
     private var pageIndex = 0
     private var spread = false
     private lateinit var tools: LinearLayout
@@ -83,11 +91,18 @@ class EditorActivity : AppCompatActivity() {
     private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
 
     private fun buildUi() {
+        // 最外层 FrameLayout：看片台覆盖层与「展开」按钮需悬浮于整个编辑器之上
+        val frame = android.widget.FrameLayout(this).apply {
+            rootFrame = this
+            setBackgroundColor(0xFFFAFAF7.toInt())
+        }
         val root = LinearLayout(this).apply {
             rootLayout = this
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(0xFFFAFAF7.toInt())
         }
+        frame.addView(root, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 
         // ---- 顶栏 ----
         val top = LinearLayout(this).apply {
@@ -123,6 +138,7 @@ class EditorActivity : AppCompatActivity() {
             setOnClickListener { showMenu() }
         })
         root.addView(top)
+        topBar = top
 
         // ---- 主工作区：横屏时左侧纵向页面栏 + 画布 ----
         bodyRow = LinearLayout(this).apply {
@@ -343,7 +359,38 @@ class EditorActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         root.addView(bottomStripWrap)
 
-        setContentView(root)
+        // ---- 看片台覆盖层（默认隐藏；展开时从底部上滑盖住工作区）----
+        lightTableHost = android.widget.FrameLayout(this).apply {
+            visibility = View.GONE
+            setBackgroundColor(0xFFF4F4EE.toInt())
+        }
+        lightTable = LightTable(this)
+        lightTableHost.addView(lightTable, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        frame.addView(lightTableHost, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+
+        // ---- 「展开 / 收回」按钮 ----
+        // 未展开：悬浮在预览栏右侧边缘上方（竖屏=底部预览栏右上；横屏=左侧预览栏右上）
+        // 已展开：移到看片台右上角，作为抽屉拉手
+        expandBtn = TextView(this).apply {
+            text = "展开"
+            textSize = 11.5f
+            setTextColor(0xFF1A1A18.toInt())
+            gravity = Gravity.CENTER
+            setPadding(dp(8f), 0, dp(8f), 0)
+            background = GradientDrawable().apply {
+                setColor(0xF2FAFAF7.toInt())
+                setStroke(Math.max(1, dp(1f)), 0x1F000000)
+                cornerRadius = dp(20f).toFloat()
+            }
+            elevation = dp(3f).toFloat()
+            contentDescription = "展开看片台"
+            setOnClickListener { if (lightTableOpen) closeLightTable() else openLightTable() }
+        }
+        frame.addView(expandBtn, android.widget.FrameLayout.LayoutParams(dp(60f), dp(40f)))
+
+        setContentView(frame)
 
         canvas.project = project
         canvas.onSelectionChanged = { updateBars() }
@@ -378,6 +425,20 @@ class EditorActivity : AppCompatActivity() {
             strip.hideReveal()
         }
 
+        // 看片台：点击缩略图进入该页；拖动排序结束后同步页码与画布并保存
+        lightTable.onPageClicked = { idx ->
+            pageIndex = idx.coerceIn(0, project.pages.size - 1)
+            canvas.select(null)
+            closeLightTable()
+            refreshAll()
+        }
+        lightTable.onReordered = { idx ->
+            pageIndex = idx.coerceIn(0, project.pages.size - 1)
+            lightTable.currentIndex = pageIndex
+            scheduleSave()
+            refreshAll()
+        }
+
         // 记录二级工具的竖屏位置（重挂载后可复原）
         selBarIdx = rootLayout.indexOfChild(selectionBar)
         framingIdx = rootLayout.indexOfChild(framingPanel)
@@ -385,6 +446,8 @@ class EditorActivity : AppCompatActivity() {
 
         applyOrientation()
         refreshAll()
+        // 顶栏此刻尚未完成测量：布局结束后按真实顶栏高度重算按钮位置
+        rootFrame.post { applyExpandBtnState() }
     }
 
     // ---------------- 跨页 / 横竖屏 ----------------
@@ -464,11 +527,109 @@ class EditorActivity : AppCompatActivity() {
         syncSpread()
         canvas.invalidateLayout()
         updateBars()
+        // 展开按钮位置随方向变化；看片台打开时同步顶栏高度并重算网格
+        applyExpandBtnState()
+        if (lightTableOpen) {
+            val lpH = lightTableHost.layoutParams as android.widget.FrameLayout.LayoutParams
+            lpH.topMargin = topBar.height
+            lightTableHost.layoutParams = lpH
+            lightTable.post { lightTable.layoutCells() }
+        }
     }
 
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         applyOrientation()
+    }
+
+    // ---------------- 看片台（Light Table） ----------------
+
+    /** 展开看片台：抽屉从底部上滑盖住整个工作区，工具条同步上移让位。 */
+    private fun openLightTable() {
+        if (lightTableOpen) return
+        lightTableOpen = true
+        canvas.select(null)
+        // 统一格高按项目基准页比例（摄影书=页尺寸，展览=墙体默认尺寸）
+        lightTable.baseAspect = project.pageWmm / project.pageHmm.coerceAtLeast(1f)
+        lightTable.project = project
+        lightTable.currentIndex = pageIndex
+        val lp = lightTableHost.layoutParams as android.widget.FrameLayout.LayoutParams
+        lp.topMargin = topBar.height
+        lightTableHost.layoutParams = lp
+        lightTableHost.visibility = View.VISIBLE
+        lightTableHost.translationY = Math.max(1, rootFrame.height - topBar.height).toFloat()
+        lightTable.post { lightTable.layoutCells() }
+        applyExpandBtnState(animate = true)
+        lightTableHost.animate().translationY(0f)
+            .setDuration(300)
+            .setInterpolator(android.view.animation.DecelerateInterpolator())
+            .withEndAction { lightTable.layoutCells(); lightTable.scrollToCurrent() }
+            .start()
+        // 工具条向上滑走：抽屉推起工作台的观感
+        tools.animate().translationY(-dp(26f).toFloat()).setDuration(220)
+            .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+    }
+
+    /** 收回看片台：下滑退出，工具条落回原位。 */
+    private fun closeLightTable() {
+        if (!lightTableOpen) return
+        lightTableOpen = false
+        val h = Math.max(1, lightTableHost.height)
+        lightTableHost.animate().translationY(h.toFloat())
+            .setDuration(260)
+            .setInterpolator(android.view.animation.AccelerateInterpolator())
+            .withEndAction {
+                lightTableHost.visibility = View.GONE
+                lightTableHost.translationY = 0f
+            }.start()
+        tools.animate().translationY(0f).setDuration(240)
+            .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+        applyExpandBtnState(animate = true)
+    }
+
+    /**
+     * 「展开 / 收回」按钮的位置与文案：
+     * - 未展开：竖屏=底部预览栏右上、横屏=左侧预览栏右边缘上方
+     * - 已展开：看片台右上角（抽屉拉手）
+     */
+    private fun applyExpandBtnState(animate: Boolean = false) {
+        val place = {
+            val lp = expandBtn.layoutParams as android.widget.FrameLayout.LayoutParams
+            if (lightTableOpen) {
+                lp.gravity = Gravity.TOP or Gravity.END
+                lp.topMargin = topBar.height + dp(8f)
+                lp.rightMargin = dp(10f)
+                lp.leftMargin = 0
+                lp.bottomMargin = 0
+            } else if (isLandscape()) {
+                lp.gravity = Gravity.TOP or Gravity.START
+                lp.topMargin = topBar.height + dp(6f)
+                lp.leftMargin = dp(88f) + dp(4f)    // 紧贴纵向预览栏右边缘
+                lp.rightMargin = 0
+                lp.bottomMargin = 0
+            } else {
+                lp.gravity = Gravity.BOTTOM or Gravity.END
+                lp.bottomMargin = dp(96f) + dp(8f)  // 底部预览栏（96dp）上方右端
+                lp.rightMargin = dp(10f)
+                lp.topMargin = 0
+                lp.leftMargin = 0
+            }
+            expandBtn.layoutParams = lp
+            expandBtn.text = if (lightTableOpen) "收回" else "展开"
+            expandBtn.contentDescription =
+                if (lightTableOpen) "收回看片台" else "展开看片台"
+        }
+        if (!animate) { place(); return }
+        expandBtn.animate().alpha(0f).setDuration(90).withEndAction {
+            place()
+            expandBtn.animate().alpha(1f).setDuration(120).start()
+        }.start()
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (lightTableOpen) { closeLightTable(); return }
+        super.onBackPressed()
     }
 
     /** 书的跨页配对：封面单右、封底单左，中间 (2,3)(4,5)… */
