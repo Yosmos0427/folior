@@ -77,6 +77,11 @@ class EditorActivity : AppCompatActivity() {
         ActivityResultContracts.PickMultipleVisualMedia()
     ) { uris -> if (!uris.isNullOrEmpty()) handlePickedPhotos(uris) }
 
+    /** 替换当前照片：单选相册 */
+    private val replacePicker = registerForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> if (uri != null) applyReplacement(uri) }
+
     companion object {
         const val REQ_PDF = 202
         const val REQ_BUNDLE = 203
@@ -198,7 +203,8 @@ class EditorActivity : AppCompatActivity() {
             setOnClickListener { action() }
             selButtons.add(this)
         }
-        // 删除放第一位：任何选中态都立即可见（红色 = 破坏性操作）
+        // 顺序：删除 / 替换(文本为编辑) / 复制 / 装裱 / 旋转 / 下移 / 置顶 / 尺寸(仅展览照片)
+        // 1) 删除放第一位：任何选中态都立即可见（红色 = 破坏性操作）
         selBtn("删除") {
             val it = selected() ?: return@selBtn
             AlertDialog.Builder(this).setTitle("删除该元素？")
@@ -209,11 +215,26 @@ class EditorActivity : AppCompatActivity() {
                     scheduleSave()
                 }.setNegativeButton("取消", null).show()
         }.setTextColor(0xFFB5442A.toInt())
+        // 2) 替换 / 编辑：照片=换图（保持位置、缩放、装裱不变）；其它类型=编辑
+        selBtn("编辑") {
+            val it = selected() ?: return@selBtn
+            if (it.type == Item.TYPE_PHOTO) pickReplacement() else editSelected()
+        }
+        // 3) 复制
+        selBtn("复制") { duplicateSelected() }
+        // 4) 装裱
         selBtn("装裱") {
             val it = selected() ?: return@selBtn
             if (it.type != Item.TYPE_PHOTO && it.type != Item.TYPE_TEXT) return@selBtn
             openFraming(it)
         }
+        // 5) 旋转（原「转90°」）
+        selBtn("旋转") { canvas.rotateSelected90() }
+        // 6) 下移
+        selBtn("下移") { sendBack() }
+        // 7) 置顶
+        selBtn("置顶") { bringTop() }
+        // 8) 尺寸：仅展览照片（实际打印尺寸）
         selBtn("尺寸") {
             val it = selected() ?: return@selBtn
             if (it.type != Item.TYPE_PHOTO) return@selBtn
@@ -222,15 +243,6 @@ class EditorActivity : AppCompatActivity() {
                 return@selBtn
             }
             editPhotoPrintSize(it)
-        }
-        selBtn("编辑") { editSelected() }
-        selBtn("复制") { duplicateSelected() }
-        selBtn("置顶") { bringTop() }
-        selBtn("下移") { sendBack() }
-        selBtn("转90°") { canvas.rotateSelected90() }
-        selBtn("跨页") {
-            if (!canvas.spanSelected())
-                Toast.makeText(this, "需横屏并同时显示左右两页", Toast.LENGTH_SHORT).show()
         }
         root.addView(selectionBar)
 
@@ -1114,13 +1126,15 @@ class EditorActivity : AppCompatActivity() {
             val it = canvas.selected!!
             val isPhoto = it.type == Item.TYPE_PHOTO
             val isExh = project.type == Project.TYPE_EXHIBITION
-            // 0=删除 1=装裱 2=尺寸 3=编辑 4=复制 5=置顶 6=下移 7=转90° 8=跨页
-            selButtons.getOrNull(1)?.visibility =          // 装裱：照片与文字
+            // 0=删除 1=替换/编辑 2=复制 3=装裱 4=旋转 5=下移 6=置顶 7=尺寸
+            selButtons.getOrNull(1)?.apply {               // 照片→替换；其它→编辑
+                text = if (isPhoto) "替换" else "编辑"
+                visibility = View.VISIBLE
+            }
+            selButtons.getOrNull(3)?.visibility =          // 装裱：照片与文字
                 if (isPhoto || it.type == Item.TYPE_TEXT) View.VISIBLE else View.GONE
-            selButtons.getOrNull(2)?.visibility =          // 尺寸：展览照片
+            selButtons.getOrNull(7)?.visibility =          // 尺寸：展览照片
                 if (isPhoto && isExh) View.VISIBLE else View.GONE
-            selButtons.getOrNull(3)?.visibility =          // 编辑：非照片
-                if (isPhoto) View.GONE else View.VISIBLE
         }
         // 可见集合变化 → 重新分行（均分铺满、每行不少于 3 个）
         val sig = selButtons.joinToString("") { if (it.visibility == View.VISIBLE) "1" else "0" }
@@ -1352,6 +1366,36 @@ class EditorActivity : AppCompatActivity() {
     }
 
     // ---------- 选中项操作 ----------
+
+    /** 打开相册单选，替换当前照片的图源 */
+    private fun pickReplacement() {
+        val it = selected() ?: return
+        if (it.type != Item.TYPE_PHOTO) return
+        replacePicker.launch(
+            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+    }
+
+    /**
+     * 应用替换：只换图源（imgId），位置 / 尺寸 / 旋转 / 装裱 / 打印尺寸全部保持不动。
+     * 导入在后台线程完成，避免大图阻塞主线程。
+     */
+    private fun applyReplacement(uri: Uri) {
+        val target = selected() ?: return
+        if (target.type != Item.TYPE_PHOTO) return
+        Thread {
+            val imgId = Store.importImage(this, uri)
+            runOnUiThread {
+                if (imgId == null) {
+                    Toast.makeText(this, "照片读取失败，请重试", Toast.LENGTH_SHORT).show()
+                    return@runOnUiThread
+                }
+                target.imgId = imgId
+                canvas.invalidate()
+                strip.refresh()
+                scheduleSave()
+            }
+        }.start()
+    }
 
     private fun editSelected() {
         editItem(selected() ?: return)
