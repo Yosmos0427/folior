@@ -139,9 +139,7 @@ class PageStrip @JvmOverloads constructor(
                         project?.pages?.getOrNull(it.bindingAdapterPosition)?.id
                     }
                     (vh as? StripVH)?.let {
-                        it.content.translationX = 0f
-                        it.content.translationY = 0f
-                        it.deleteBtn.visibility = View.INVISIBLE
+                        it.deleteOverlay.visibility = View.INVISIBLE
                     }
                 }
             }
@@ -356,16 +354,10 @@ class PageStrip @JvmOverloads constructor(
             holder.badge.width = (16 * d).toInt()
             holder.badge.setPadding(if (verticalMode) (3 * d).toInt() else 0, 0, 0, 0)
 
-            // 滑动呼出删除按钮的状态（按页 id 匹配，滚动后不丢失）
+            // 覆盖式删除层的状态（按页 id 匹配，滚动后不丢失）；内容本身不动
             val revealed = revealedPageId != null && revealedPageId == page.id
-            val reveal = revealPx()
-            holder.content.translationY = if (revealed && !verticalMode) -reveal else 0f
-            holder.content.translationX = if (revealed && verticalMode) reveal else 0f
-            holder.deleteBtn.visibility = if (revealed) View.VISIBLE else View.INVISIBLE
-            holder.deleteBtn.setOnClickListener {
-                val pp = holder.bindingAdapterPosition
-                if (pp >= 0) onStripDelete?.invoke(pp)
-            }
+            holder.deleteOverlay.visibility = if (revealed) View.VISIBLE else View.INVISIBLE
+            holder.deleteOverlay.translationY = 0f
         }
     }
 
@@ -379,13 +371,16 @@ class PageStrip @JvmOverloads constructor(
             textSize = 9.5f
             gravity = if (verticalMode) Gravity.CENTER_VERTICAL or Gravity.START else Gravity.CENTER
         }
-        val deleteBtn: ImageView
+        val deleteOverlay: FrameLayout
+        private val cell: FrameLayout = root
 
         private var downX = 0f
         private var downY = 0f
         private var moved = false
         private var axisLocked = false
-        /** 本次手势是否已把删除按钮固定 */
+        /** 呼出轴不主导：整个手势交给 RecyclerView 滚动 */
+        private var axisIgnored = false
+        /** 本次手势是否已把删除层固定 */
         private var revealCommitted = false
 
         init {
@@ -399,105 +394,142 @@ class PageStrip @JvmOverloads constructor(
             content.addView(thumb)
             content.addView(badge)
 
-            deleteBtn = ImageView(context).apply {
-                setImageResource(com.yussy.folior.R.drawable.ic_trash)
-                setColorFilter(0xFFB5442A.toInt(), android.graphics.PorterDuff.Mode.SRC_IN)
+            // 覆盖式删除层：上滑时从下方滑入盖住缩略图；轻点删除，下滑退出
+            deleteOverlay = FrameLayout(context).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                visibility = View.INVISIBLE
                 background = GradientDrawable().apply {
-                    shape = GradientDrawable.OVAL
-                    setColor(0x1FB5442A)
+                    setColor(0xF0B5442A.toInt())
+                    cornerRadius = 2f * d
                 }
-                contentDescription = "删除页面"
-                val side = (34 * d).toInt()
-                layoutParams = FrameLayout.LayoutParams(side, side,
-                    if (verticalMode) Gravity.START or Gravity.CENTER_VERTICAL
-                    else Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+                contentDescription = "删除本页"
             }
-            root.addView(deleteBtn)
+            deleteOverlay.addView(ImageView(context).apply {
+                setImageResource(com.yussy.folior.R.drawable.ic_trash)
+                setColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN)
+            }, FrameLayout.LayoutParams((22 * d).toInt(), (22 * d).toInt(), Gravity.CENTER))
+
             root.addView(content)
+            root.addView(deleteOverlay)   // 覆盖在缩略图之上
+
+            // 覆盖层自身手势：轻点=删除，下滑=收起
+            var ovDownY = 0f
+            var ovDownX = 0f
+            var ovMoved = false
+            deleteOverlay.setOnTouchListener { _, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        ovDownX = e.x; ovDownY = e.y; ovMoved = false; true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val mdx = Math.abs(e.x - ovDownX)
+                        val mdy = Math.abs(e.y - ovDownY)
+                        when {
+                            // 横向滑动 = 想翻看列表：收起并交还手势给 RecyclerView
+                            mdx > 6f * d && mdx > mdy -> {
+                                collapseOverlay()
+                                return@setOnTouchListener false
+                            }
+                            mdy > 6f * d -> ovMoved = true
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        if (ovMoved) collapseOverlay()
+                        else {
+                            val pp = bindingAdapterPosition
+                            if (pp >= 0) {
+                                revealedPageId = null
+                                onStripDelete?.invoke(pp)
+                            }
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> { collapseOverlay(); true }
+                    else -> false
+                }
+            }
 
             content.setOnTouchListener { _, ev ->
                 val pos = bindingAdapterPosition
                 if (pos == RecyclerView.NO_POSITION) return@setOnTouchListener false
                 val page = project?.pages?.getOrNull(pos)
                     ?: return@setOnTouchListener false
-                // 该页正在被长按拖动：不参与滑出删除逻辑，事件交给 ItemTouchHelper
+                // 该页正在被长按拖动：让位给 ItemTouchHelper
                 if (draggingPageId != null && draggingPageId == page.id) {
                     return@setOnTouchListener false
                 }
-                val reveal = revealPx()
+                val h = cell.height.coerceAtLeast(1).toFloat()
                 val slop = 4f * d
-                // 滑出判定距离：轻轻一滑（8dp）即固定，无需滑到顶
                 val commit = 8f * d
 
                 when (ev.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        downX = ev.x; downY = ev.y; moved = false; axisLocked = false
+                        downX = ev.x; downY = ev.y
+                        moved = false; axisLocked = false; axisIgnored = false
                         revealCommitted = revealedPageId == page.id
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
                         val dx = ev.x - downX
                         val dy = ev.y - downY
-                        // 滑动轴：横向栏=纵向滑动；纵向栏=横向滑动
+                        // 呼出轴：竖屏=纵向（上滑）、横屏=横向（右滑）
                         val axisD = if (verticalMode) dx else dy
                         val otherD = if (verticalMode) dy else dx
-                        // 呼出方向为正：竖屏上滑（dy<0）、横屏右滑（dx>0）
-                        val towardShow = if (verticalMode) axisD else -axisD
                         if (!axisLocked && Math.abs(axisD) > slop) {
                             axisLocked = true
-                            if (towardShow > 0 && Math.abs(axisD) > Math.abs(otherD) * 1.1f) {
-                                // 呼出轴主导：本手势内不交给 RecyclerView 滚动/长按拖动
-                                rv.requestDisallowInterceptTouchEvent(true)
-                            }
+                            // 呼出轴不占主导 → 整个手势让给列表滚动（不抢手势，长按也不受影响）
+                            axisIgnored = Math.abs(axisD) <= Math.abs(otherD) * 1.2f
                         }
-                        if (axisLocked) {
+                        if (axisLocked && !axisIgnored) {
                             moved = true
-                            val t = (if (verticalMode) axisD.coerceIn(0f, reveal)
-                                    else axisD.coerceIn(-reveal, 0f))
-                            if (verticalMode) content.translationX = t
-                            else content.translationY = t
-
-                            // 滑出即固定：一旦越过判定距离立刻锁定（不等松手，避免回弹误取消）
-                            if (!revealCommitted && towardShow > commit) {
-                                revealCommitted = true
-                                revealedPageId = page.id
-                                deleteBtn.visibility = View.VISIBLE
+                            val towardShow = if (verticalMode) axisD else -axisD
+                            val p = (towardShow / h).coerceIn(0f, 1f)
+                            if (p > 0f) {
+                                deleteOverlay.visibility = View.VISIBLE
+                                deleteOverlay.translationY = h * (1f - p)
                             }
-                        }
-                        true
-                    }
-                    MotionEvent.ACTION_CANCEL -> {
-                        // 被父级接管（滚动）：按是否已固定决定去留
-                        if (!revealCommitted) {
-                            revealCommitted = revealedPageId == page.id
-                            if (!revealCommitted) stripAdapter.notifyDataSetChanged()
+                            if (towardShow > commit) revealCommitted = true
                         }
                         true
                     }
                     MotionEvent.ACTION_UP -> {
                         val delta = if (verticalMode) ev.x - downX else ev.y - downY
-                        // 反向位移：竖屏下滑（dy>0）、横屏左滑（dx<0）
-                        val back = if (verticalMode) -delta else delta
+                        val towardShow = if (verticalMode) delta else -delta
                         when {
-                            !moved -> {
-                                // 轻点：已固定的收起，否则选中该页
-                                if (revealCommitted) setRevealed(null) else selectFromStrip(pos)
-                            }
-                            revealCommitted && back > reveal * 0.45f -> {
-                                // 明显反向滑回 = 取消固定
-                                setRevealed(null)
-                            }
-                            else -> {
-                                // 保持当前状态（已固定的继续固定）
-                                if (revealCommitted) revealedPageId = page.id
-                                stripAdapter.notifyDataSetChanged()
-                            }
+                            !moved ->
+                                if (revealCommitted) collapseOverlay() else selectFromStrip(pos)
+                            revealCommitted && towardShow < -commit -> collapseOverlay()
+                            revealCommitted -> settleOverlay(page.id)
+                            else -> collapseOverlay()
                         }
+                        true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        if (revealCommitted) settleOverlay(page.id) else collapseOverlay()
                         true
                     }
                     else -> false
                 }
             }
+        }
+
+        /** 吸附：删除层完全盖住缩略图并保持固定 */
+        private fun settleOverlay(pageId: String) {
+            revealedPageId = pageId
+            revealCommitted = true
+            deleteOverlay.visibility = View.VISIBLE
+            deleteOverlay.animate().translationY(0f).setDuration(110).start()
+        }
+
+        /** 退出：删除层向下滑出并隐藏 */
+        private fun collapseOverlay() {
+            if (revealedPageId != null) revealedPageId = null
+            revealCommitted = false
+            deleteOverlay.animate().translationY(cell.height.coerceAtLeast(1).toFloat())
+                .setDuration(140)
+                .withEndAction { deleteOverlay.visibility = View.INVISIBLE }.start()
         }
     }
 }
