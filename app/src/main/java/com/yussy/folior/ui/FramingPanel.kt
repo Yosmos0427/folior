@@ -19,7 +19,8 @@ import com.yussy.folior.model.parseColor
  *   ✕  快捷预设：无 / 经典 / 原木 / 悬浮
  *   ── 背景衬材 ──
  *   材质：无 / 纸张 / 木板 / 金属 / 亚克力
- *   颜色：[色块按钮]    外延：▬▬▬ 12%
+ *   颜色：[色块按钮]
+ *   横向外沿：▬▬▬ 12%   纵向外沿：▬▬▬ 12%
  *   比例：跟随 / 1:1 / 4:3 / 3:2 / 16:9
  *   ── 边框 ──
  *   材质：无 / 木板 / 金属 / 亚克力
@@ -150,9 +151,19 @@ class FramingPanel(context: Context) : LinearLayout(context) {
         }
 
         /** 滑杆行：标签 + 滑杆 + 数值 */
-        fun sliderRow(label: String, initPct: Int, maxPct: Int, onNow: (Int) -> Unit): LinearLayout {
+        fun sliderRow(
+            label: String, initPct: Int, maxPct: Int,
+            labelWidthDp: Float = 44f, onNow: (Int) -> Unit
+        ): LinearLayout {
             val r = row()
-            r.addView(rowLabel(label))
+            r.addView(TextView(context).apply {
+                text = label
+                textSize = 12f
+                gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
+                setTextColor(0xFF8A8A84.toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    px(labelWidthDp), ViewGroup.LayoutParams.MATCH_PARENT)
+            })
             val value = TextView(context).apply {
                 textSize = 12f
                 setTextColor(0xFF1A1A18.toInt())
@@ -196,11 +207,11 @@ class FramingPanel(context: Context) : LinearLayout(context) {
         })
         listOf(
             "无" to { it.matStyle = null; it.frameStyle = null },
-            "经典" to { it.matStyle = "paper"; it.matPad = 0.12f; it.matRatio = 0f
+            "经典" to { it.matStyle = "paper"; it.matPadX = 0.12f; it.matPadY = 0.12f; it.matRatio = 0f
                 it.frameStyle = "wood"; it.frameColor = "#1A1A18"; it.frameW = 0.012f },
-            "原木" to { it.matStyle = "wood"; it.matColor = null; it.matPad = 0.15f; it.matRatio = 0f
+            "原木" to { it.matStyle = "wood"; it.matColor = null; it.matPadX = 0.15f; it.matPadY = 0.15f; it.matRatio = 0f
                 it.frameStyle = "wood"; it.frameColor = "#8A5B3A"; it.frameW = 0.03f },
-            "悬浮" to { it.matStyle = "acrylic"; it.matColor = null; it.matPad = 0.18f; it.matRatio = 0f
+            "悬浮" to { it.matStyle = "acrylic"; it.matColor = null; it.matPadX = 0.18f; it.matPadY = 0.18f; it.matRatio = 0f
                 it.frameStyle = null; it.frameColor = null }
         ).forEach { (name, action) ->
             addChip(presetRow, name, false) { action(); onChanged?.invoke(); rebuild() }
@@ -221,9 +232,10 @@ class FramingPanel(context: Context) : LinearLayout(context) {
         matColorRow.addView(rowLabel("颜色"))
         matColorRow.addView(colorButton("衬材颜色", { it.matColor }) { hex -> it.matColor = hex })
         root.addView(matColorRow)
-        root.addView(sliderRow("外延", (it.matPad * 100).toInt().coerceIn(0, 40), 40) { p ->
-            it.matPad = p / 100f
-        })
+        root.addView(sliderRow("横向外沿", (it.matPadX * 100).toInt().coerceIn(0, 40), 40,
+            labelWidthDp = 62f) { p -> it.matPadX = p / 100f })
+        root.addView(sliderRow("纵向外沿", (it.matPadY * 100).toInt().coerceIn(0, 40), 40,
+            labelWidthDp = 62f) { p -> it.matPadY = p / 100f })
 
         val ratioRow = row()
         ratioRow.addView(rowLabel("比例"))

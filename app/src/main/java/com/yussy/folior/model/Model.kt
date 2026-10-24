@@ -106,7 +106,8 @@ data class Item(
     /** 背景衬材：null=无 / paper 纸张 / wood 木板 / metal 金属 / acrylic 亚克力 */
     var matStyle: String? = null,
     var matColor: String? = null,      // 衬材颜色覆盖
-    var matPad: Float = 0.08f,         // 衬材外延（内容 min(宽,高) 比例）
+    var matPadX: Float = 0.08f,        // 衬材横向外沿（内容 min(宽,高) 比例）
+    var matPadY: Float = 0.08f,        // 衬材纵向外沿
     var matRatio: Float = 0f,          // 衬材宽高比，0=跟随内容
     /** 照片实际打印宽度（mm），用于展览墙体按真实比例摆放；null = 未指定 */
     var printMm: Float? = null,
@@ -154,7 +155,10 @@ data class Item(
             it.frameW = o.optDouble("frameW", 0.02).toFloat()
             it.matStyle = if (o.isNull("matStyle")) null else o.optString("matStyle")
             it.matColor = if (o.isNull("matColor")) null else o.optString("matColor")
-            it.matPad = o.optDouble("matPad", 0.08).toFloat()
+            // 旧数据只有统一外延 matPad：两个方向都取该值
+            val legacyPad = o.optDouble("matPad", 0.08).toFloat()
+            it.matPadX = o.optDouble("matPadX", legacyPad.toDouble()).toFloat()
+            it.matPadY = o.optDouble("matPadY", legacyPad.toDouble()).toFloat()
             it.matRatio = o.optDouble("matRatio", 0.0).toFloat()
             // ---- 旧数据迁移 ----
             if (it.frameStyle == "mat") {          // 旧卡纸装裱 → 纸张衬材
@@ -202,7 +206,9 @@ data class Item(
         o.put("frameW", frameW.toDouble())
         o.put("matStyle", matStyle ?: JSONObject.NULL)
         o.put("matColor", matColor ?: JSONObject.NULL)
-        o.put("matPad", matPad.toDouble())
+        o.put("matPadX", matPadX.toDouble())
+        o.put("matPadY", matPadY.toDouble())
+        o.put("matPad", Math.min(matPadX, matPadY).toDouble())   // 旧版本兼容字段
         o.put("matRatio", matRatio.toDouble())
         o.put("printMm", printMm ?: JSONObject.NULL)
         o.put("text", text)

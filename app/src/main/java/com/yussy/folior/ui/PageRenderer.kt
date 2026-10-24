@@ -282,7 +282,7 @@ object PageRenderer {
     )
 
     /**
-     * 计算装裱几何：衬材在内容外延 matPad（可锁定比例），
+     * 计算装裱几何：衬材在内容外延 matPadX（左右）/ matPadY（上下），可锁定比例，
      * 边框宽度按 min(衬宽,衬高) 比例围在衬材外围。
      */
     fun computeFraming(item: Item, fl: Float, fT: Float, fw: Float, fh: Float): Framing? {
@@ -291,8 +291,10 @@ object PageRenderer {
         if (!hasMat && !hasFrame) return null
         var l = fl; var t = fT; var r = fl + fw; var b = fT + fh
         if (hasMat) {
-            val pad = item.matPad * Math.min(fw, fh)
-            l -= pad; t -= pad; r += pad; b += pad
+            val base = Math.min(fw, fh)
+            val padX = item.matPadX * base
+            val padY = item.matPadY * base
+            l -= padX; r += padX; t -= padY; b += padY
             if (item.matRatio > 0.01f) {
                 // 锁定衬材比例：以覆盖内容为原则扩展（居中）
                 val cw = r - l; val ch = b - t
