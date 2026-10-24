@@ -22,7 +22,9 @@ object PdfExporter {
 
     data class Options(
         val insertBlankFirst: Boolean = false,
-        val mergeSpreads: Boolean = false
+        val mergeSpreads: Boolean = false,
+        /** 渲染精度：小型档用较低 dpi 控制体积，完整档用 300 */
+        val dpi: Int = 300
     )
 
     interface Progress {
@@ -48,10 +50,24 @@ object PdfExporter {
     private fun hPt(project: Project, page: com.yussy.folior.model.Page?): Float =
         ((page?.hmm ?: project.pageHmm) / 25.4f * 72f)
 
-    private fun pxAt300(ptWidth: Float): Int = (ptWidth / 72f * 300f).toInt()
+    private fun pxAt(dpi: Int, ptWidth: Float): Int = (ptWidth / 72f * dpi).toInt()
 
+    /** 异步导出（内部起线程）；需要分档重试时用 exportBlocking */
     fun export(ctx: Context, project: Project, out: OutputStream, opts: Options, progress: Progress) {
-        Thread {
+        Thread { runExport(ctx, project, out, opts, progress) }.start()
+    }
+
+    /** 同步导出：在调用线程执行，返回时文件已写完（供"超限降精度重导"循环使用） */
+    fun exportBlocking(
+        ctx: Context, project: Project, out: OutputStream, opts: Options, progress: Progress
+    ) {
+        runExport(ctx, project, out, opts, progress)
+    }
+
+    private fun runExport(
+        ctx: Context, project: Project, out: OutputStream, opts: Options, progress: Progress
+    ) {
+        run {
             var ok = false
             var err: String? = null
             try {
@@ -80,9 +96,9 @@ object PdfExporter {
                         c.save()
                         c.clipRect(0f, 0f, wl + wr, H)
                         pageL?.let {
-                            PageRenderer.drawItems(ctx, project, it, c, leftRect, true, pxAt300(wl)) }
+                            PageRenderer.drawItems(ctx, project, it, c, leftRect, true, pxAt(opts.dpi, wl)) }
                         pageR?.let {
-                            PageRenderer.drawItems(ctx, project, it, c, rightRect, true, pxAt300(wr)) }
+                            PageRenderer.drawItems(ctx, project, it, c, rightRect, true, pxAt(opts.dpi, wr)) }
                         c.restore()
                         doc.finishPage(pdfPage)
                         handler.post { progress.onProgress(idx + 1, total) }
@@ -111,15 +127,15 @@ object PdfExporter {
                                 project.pages.getOrNull(realIdx - 1)?.let { prev ->
                                     drawOverflow(ctx, project, prev, canvas,
                                         RectF(-wPt(project, prev), 0f, 0f, hPt(project, prev)),
-                                        toRight = true, pxHint = pxAt300(wPt(project, prev)))
+                                        toRight = true, pxHint = pxAt(opts.dpi, wPt(project, prev)))
                                 }
                                 project.pages.getOrNull(realIdx + 1)?.let { next ->
                                     drawOverflow(ctx, project, next, canvas,
                                         RectF(pw, 0f, pw + wPt(project, next), hPt(project, next)),
-                                        toRight = false, pxHint = pxAt300(wPt(project, next)))
+                                        toRight = false, pxHint = pxAt(opts.dpi, wPt(project, next)))
                                 }
                             }
-                            PageRenderer.drawItems(ctx, project, page, canvas, pr, true, pxAt300(pw))
+                            PageRenderer.drawItems(ctx, project, page, canvas, pr, true, pxAt(opts.dpi, pw))
                         }
                         doc.finishPage(pdfPage)
                         handler.post { progress.onProgress(i + 1, total) }
@@ -141,7 +157,7 @@ object PdfExporter {
                 if (fOk) progress.onStage("已保存")
                 progress.onDone(fOk, fErr)
             }
-        }.start()
+        }
     }
 
     /** 把相邻页中真正越界（跨书脊）的元素补画到当前页。 */

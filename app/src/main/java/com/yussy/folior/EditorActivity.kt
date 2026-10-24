@@ -19,6 +19,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.yussy.folior.model.*
+import com.yussy.folior.store.Prefs
 import com.yussy.folior.store.Store
 import com.yussy.folior.ui.*
 
@@ -1521,18 +1522,14 @@ class EditorActivity : AppCompatActivity() {
     private var pdfOptions = PdfExporter.Options()
 
     private fun exportPdf() {
-        val items = arrayOf(
-            "单页 · 标准（逐页，适合打印）",
-            "单页 + 首页空白（双页阅读对齐 · 推荐）",
-            "双页合并（每页即一组对开页）"
-        )
+        val items = arrayOf("单页", "双联", "单页 + 空白首页")
         AlertDialog.Builder(this)
             .setTitle("PDF 导出方式")
             .setItems(items) { _, which ->
                 pdfOptions = when (which) {
-                    1 -> PdfExporter.Options(insertBlankFirst = true)
-                    2 -> PdfExporter.Options(mergeSpreads = true)
-                    else -> PdfExporter.Options()
+                    1 -> PdfExporter.Options(mergeSpreads = true)       // 双联
+                    2 -> PdfExporter.Options(insertBlankFirst = true)   // 单页 + 空白首页
+                    else -> PdfExporter.Options()                       // 单页
                 }
                 Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
                     addCategory(Intent.CATEGORY_OPENABLE)
@@ -1567,28 +1564,86 @@ class EditorActivity : AppCompatActivity() {
                     .setCancelable(false)
                     .create()
                 dialog.show()
-                try {
-                    val opts = pdfOptions
-                    contentResolver.openOutputStream(uri)?.let { out ->
-                        PdfExporter.export(this, project, out, opts, object : PdfExporter.Progress {
-                            override fun onProgress(done: Int, total: Int) {
-                                dialog.setMessage("渲染页面 $done / $total")
-                            }
+                val opts = pdfOptions
+                val dpiStart = Prefs.pdfDpi(this)
+                val limitMb = Prefs.pdfLimitMb(this)
+                val modeLabel = Prefs.pdfModeLabel(this)
+                Thread {
+                    var dpi = dpiStart
+                    var attempt = 0
+                    var outFile: java.io.File? = null
+                    var failed: String? = null
+                    // 有硬上限时最多重导 3 次（逐次降精度）；完整档只导一次
+                    val maxAttempts = if (limitMb > 0) 3 else 1
+                    while (attempt < maxAttempts && outFile == null) {
+                        val f = java.io.File(cacheDir, "pdf_export_$attempt.pdf")
+                        val round = attempt + 1
+                        runOnUiThread {
+                            dialog.setMessage("$modeLabel · 第 $round 次渲染（${dpi} dpi）")
+                        }
+                        try {
+                            java.io.FileOutputStream(f).use { fo ->
+                                PdfExporter.exportBlocking(this, project, fo,
+                                    opts.copy(dpi = dpi), object : PdfExporter.Progress {
+                                        override fun onProgress(done: Int, total: Int) {
+                                            runOnUiThread {
+                                                dialog.setMessage("$modeLabel · ${dpi}dpi  ·  渲染 $done / $total")
+                                            }
+                                        }
 
-                            override fun onStage(text: String) {
-                                dialog.setMessage(text)
+                                        override fun onStage(text: String) {}
+
+                                        override fun onDone(ok: Boolean, error: String?) {
+                                            if (!ok) failed = error
+                                        }
+                                    })
                             }
-                            override fun onDone(ok: Boolean, error: String?) {
-                                dialog.dismiss()
-                                if (!ok) Toast.makeText(this@EditorActivity,
-                                    "导出失败：$error", Toast.LENGTH_SHORT).show()
-                            }
-                        })
+                        } catch (e: Throwable) {
+                            failed = e.message ?: "导出异常"
+                        }
+                        if (failed != null) {
+                            f.delete()
+                            break
+                        }
+                        val mb = f.length() / (1024.0 * 1024.0)
+                        if (limitMb <= 0 || mb <= limitMb) {
+                            outFile = f
+                        } else {
+                            // 超出上限：降一档精度重导
+                            f.delete()
+                            attempt++
+                            dpi = (dpi * 0.72).toInt().coerceAtLeast(72)
+                        }
                     }
-                } catch (e: Exception) {
-                    dialog.dismiss()
-                    Toast.makeText(this, "导出失败：${e.message}", Toast.LENGTH_SHORT).show()
-                }
+
+                    val result = outFile
+                    if (result == null) {
+                        runOnUiThread {
+                            dialog.dismiss()
+                            Toast.makeText(this@EditorActivity,
+                                "导出失败：" + (failed
+                                    ?: "在 ${limitMb}MB 上限内无法完成，可在全局设置中改用更高档位"),
+                                Toast.LENGTH_LONG).show()
+                        }
+                        return@Thread
+                    }
+                    runOnUiThread { dialog.setMessage("正在写入文件…") }
+                    var writeErr: String? = null
+                    try {
+                        val os = contentResolver.openOutputStream(uri)
+                        if (os == null) writeErr = "无法写入目标文件"
+                        else os.use { out -> result.inputStream().use { it.copyTo(out, 64 * 1024) } }
+                    } catch (e: Throwable) {
+                        writeErr = e.message
+                    }
+                    result.delete()
+                    runOnUiThread {
+                        dialog.dismiss()
+                        if (writeErr != null) Toast.makeText(this@EditorActivity,
+                            "导出失败：$writeErr", Toast.LENGTH_SHORT).show()
+                        // 成功不弹提示，沿用"不打断操作"的约定
+                    }
+                }.start()
             }
             REQ_BUNDLE -> {
                 val uri = data.data ?: return

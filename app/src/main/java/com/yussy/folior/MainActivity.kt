@@ -66,10 +66,11 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
         top.addView(TextView(this).apply {
-            text = "导入"
+            text = "≡"                       // 三横线：收纳「导入」与「全局设置」
+            textSize = 24f
             setTextColor(0xFF1A1A18.toInt())
-            setPadding((16 * d).toInt(), (8 * d).toInt(), (8 * d).toInt(), (8 * d).toInt())
-            setOnClickListener { pickImport() }
+            setPadding((18 * d).toInt(), (2 * d).toInt(), (12 * d).toInt(), (2 * d).toInt())
+            setOnClickListener { showHomeMenu(it) }
         })
         root.addView(top)
 
@@ -161,6 +162,21 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    /** 首页右上角「≡」菜单：导入工程文件 / 全局设置 */
+    private fun showHomeMenu(anchor: View) {
+        val pm = android.widget.PopupMenu(this, anchor)
+        pm.menu.add(0, 1, 0, "导入工程文件")
+        pm.menu.add(0, 2, 1, "全局设置")
+        pm.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> pickImport()
+                2 -> startActivity(Intent(this, SettingsActivity::class.java))
+            }
+            true
+        }
+        pm.show()
     }
 
     /** 长按菜单：就地重命名项目（不进入编辑器） */
