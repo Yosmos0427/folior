@@ -41,8 +41,7 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var sideStripWrap: LinearLayout
     private lateinit var bottomStripWrap: LinearLayout
     // 横屏右侧纵向工具槽（一级工具 / 二级工具 / 装裱 / 绘制 共用同一槽位，互斥占位）
-    private lateinit var rightDock: android.widget.ScrollView
-    private lateinit var rightInner: LinearLayout
+    private lateinit var rightDock: LinearLayout
     private var toolsIdx = 0
     // 看片台（全工作区平铺排序）
     private lateinit var rootFrame: android.widget.FrameLayout
@@ -57,6 +56,10 @@ class EditorActivity : AppCompatActivity() {
     private var spread = false
     private lateinit var tools: LinearLayout
     private lateinit var drawBar: LinearLayout
+    // 工具按钮注册表（按顺序），用于「先填满一行再起下一行、等宽均分」的动态排布
+    private val toolButtons = mutableListOf<TextView>()
+    private val selButtons = mutableListOf<TextView>()
+    private var selSig = ""
     private var drawMode = false
     private var brushColor = "#1A1A18"
     private var eraserOn = false
@@ -168,16 +171,11 @@ class EditorActivity : AppCompatActivity() {
         canvasWrap.addView(canvas)
         bodyRow.addView(canvasWrap)
 
-        // 横屏右侧纵向工具槽：内容用 ScrollView 兜底，避免极端比例下按钮被截断
-        rightDock = android.widget.ScrollView(this).apply {
+        // 横屏右侧纵向工具槽：内部各工具组用 weight 均分栏高，正好充满、无需滚动
+        rightDock = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             visibility = View.GONE
-            isFillViewport = true
-            isVerticalScrollBarEnabled = false
-            overScrollMode = View.OVER_SCROLL_NEVER
         }
-        rightInner = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        rightDock.addView(rightInner, android.widget.FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         bodyRow.addView(rightDock, LinearLayout.LayoutParams(
             dp(108f), ViewGroup.LayoutParams.MATCH_PARENT))
         root.addView(bodyRow)
@@ -186,28 +184,20 @@ class EditorActivity : AppCompatActivity() {
         selectionBar = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
+            setPadding(dp(4f), dp(4f), dp(4f), dp(4f))
         }
-        val selRow1 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(dp(4f), dp(4f), dp(4f), 0)
-        }
-        val selRow2 = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(dp(4f), 0, dp(4f), dp(4f))
-        }
-        // 按钮所在行：第一行放编辑类操作，第二行放排版类操作
-        var selTarget: LinearLayout = selRow1
+        // 按钮按顺序登记，实际行数由 relayoutButtons 按可用宽度动态决定
         fun selBtn(text: String, action: () -> Unit) = TextView(this).apply {
             this.text = text
             textSize = 13f
             setTextColor(0xFF1A1A18.toInt())
             setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
+            maxLines = 1
+            isSingleLine = true
+            gravity = Gravity.CENTER
             setOnClickListener { action() }
-            selTarget.addView(this)
+            selButtons.add(this)
         }
-        fun switchRow(row: LinearLayout) { selTarget = row }
         // 删除放第一位：任何选中态都立即可见（红色 = 破坏性操作）
         selBtn("删除") {
             val it = selected() ?: return@selBtn
@@ -234,7 +224,6 @@ class EditorActivity : AppCompatActivity() {
             editPhotoPrintSize(it)
         }
         selBtn("编辑") { editSelected() }
-        switchRow(selRow2)
         selBtn("复制") { duplicateSelected() }
         selBtn("置顶") { bringTop() }
         selBtn("下移") { sendBack() }
@@ -243,8 +232,6 @@ class EditorActivity : AppCompatActivity() {
             if (!canvas.spanSelected())
                 Toast.makeText(this, "需横屏并同时显示左右两页", Toast.LENGTH_SHORT).show()
         }
-        selectionBar.addView(selRow1)
-        selectionBar.addView(selRow2)
         root.addView(selectionBar)
 
         // ---- 内联装裱面板（布局流内，不遮挡工作区；即时生效） ----
@@ -343,19 +330,21 @@ class EditorActivity : AppCompatActivity() {
         })
         root.addView(drawBar)
 
-        // ---- 底部工具条 ----
+        // ---- 工具条 ----
         tools = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(dp(6f), dp(4f), dp(6f), dp(4f))
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(4f), dp(4f), dp(4f), dp(4f))
         }
         fun toolBtn(text: String, action: () -> Unit) = TextView(this).apply {
             this.text = text
             textSize = 13f
             setTextColor(0xFF1A1A18.toInt())
             setPadding(dp(8f), dp(10f), dp(8f), dp(10f))
+            maxLines = 1
+            isSingleLine = true
+            gravity = Gravity.CENTER
             setOnClickListener { action() }
-            tools.addView(this)
+            toolButtons.add(this)
         }
         toolBtn("＋照片") { pickPhotos() }
         toolBtn("＋文字") { addText() }
@@ -375,8 +364,7 @@ class EditorActivity : AppCompatActivity() {
             contentDescription = "展开看片台"
             setOnClickListener { if (lightTableOpen) closeLightTable() else openLightTable() }
         }
-        tools.addView(expandBtn, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        toolButtons.add(expandBtn)
         root.addView(tools)
 
         // ---- 页面条（竖屏在底部，横屏移到左侧）----
@@ -518,12 +506,13 @@ class EditorActivity : AppCompatActivity() {
 
             // ---- 右：纵向工具槽 ----
             rightDock.visibility = View.VISIBLE
-            if (tools.parent !== rightInner) {
+            if (tools.parent !== rightDock) {
                 (tools.parent as? ViewGroup)?.removeView(tools)
-                rightInner.addView(tools, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
             }
-            layoutTools(land = true)
+            rightDock.addView(tools, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+            relayoutButtons(tools, toolButtons, 4, land = true)
+            relayoutButtons(selectionBar, selButtons, 7, land = true)
             dockSecondary(land = true)
         } else {
             // ---- 下：横向预览栏 ----
@@ -541,7 +530,8 @@ class EditorActivity : AppCompatActivity() {
 
             // 竖屏：按固定顺序归位 top / bodyRow / 二级工具 / 工具条 / 预览栏
             restackPortrait()
-            layoutTools(land = false)
+            relayoutButtons(tools, toolButtons, 4, land = false)
+            relayoutButtons(selectionBar, selButtons, 7, land = false)
             dockSecondary(land = false)
         }
 
@@ -557,26 +547,66 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
-    /** 一级工具按钮布局：竖屏等宽均分铺满一行；横屏纵向单列、每项铺满栏宽 */
-    private fun layoutTools(land: Boolean) {
-        tools.orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-        tools.gravity = if (land) Gravity.TOP else Gravity.CENTER
-        tools.setPadding(
-            if (land) 0 else dp(6f), if (land) dp(6f) else dp(4f),
-            if (land) 0 else dp(6f), if (land) dp(6f) else dp(4f))
-        for (i in 0 until tools.childCount) {
-            val v = tools.getChildAt(i)
-            if (v === expandBtn && lightTableOpen) continue   // 已迁移到看片台顶栏
-            v.layoutParams = if (land)
-                LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            else LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            (v as? TextView)?.let {
-                it.gravity = Gravity.CENTER
-                // 横屏纵向一列按钮需更紧凑，否则 9 项装不下
-                if (land) it.setPadding(dp(10f), dp(5f), dp(10f), dp(5f))
-                else it.setPadding(dp(8f), dp(10f), dp(8f), dp(10f))
+    /**
+     * 工具按钮排布（一级 / 二级通用）：
+     * - 竖屏：先填满一行再起下一行，每行按钮**等宽均分铺满**；每行不少于 3 个
+     * - 横屏：单列纵向，每行 1 个，行高按 weight 均分整个工具槽（完整充满栏高）
+     * 按钮文字强制单行（maxLines = 1），不会在按钮内部折行。
+     */
+    private fun relayoutButtons(
+        host: LinearLayout,
+        buttons: List<TextView>,
+        maxPerRow: Int,
+        land: Boolean
+    ) {
+        val d = resources.displayMetrics.density
+        val padH = (5 * d).toInt()
+        val padV = if (land) (6 * d).toInt() else (9 * d).toInt()
+
+        host.removeAllViews()
+        // 已迁移到看片台顶栏的按钮不参与；隐藏的按钮先摘下来（之后变可见再重新排）
+        buttons.forEach { b ->
+            if (b.parent !== ltHeader && b.visibility == View.GONE) {
+                (b.parent as? ViewGroup)?.removeView(b)
             }
+        }
+        val pool = buttons.filter { it.parent !== ltHeader && it.visibility != View.GONE }
+        if (pool.isEmpty()) return
+
+        val n = pool.size
+        var rows = if (land) n else Math.ceil(n.toDouble() / maxPerRow).toInt().coerceAtLeast(1)
+        if (!land) {
+            // 每行至少 3 个：行数过多时减少行数
+            while (rows > 1 && n / rows < 3) rows--
+        }
+        val perRow = Math.ceil(n.toDouble() / rows).toInt().coerceAtLeast(1)
+
+        var i = 0
+        while (i < n) {
+            val row = LinearLayout(this@EditorActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    if (land) 0 else ViewGroup.LayoutParams.WRAP_CONTENT,
+                    if (land) 1f else 0f)
+            }
+            val end = Math.min(i + perRow, n)
+            for (k in i until end) {
+                val b = pool[k]
+                (b.parent as? ViewGroup)?.removeView(b)
+                row.addView(b, LinearLayout.LayoutParams(
+                    0,
+                    if (land) ViewGroup.LayoutParams.MATCH_PARENT
+                    else ViewGroup.LayoutParams.WRAP_CONTENT,
+                    1f))
+                b.maxLines = 1
+                b.isSingleLine = true
+                b.gravity = Gravity.CENTER
+                b.setPadding(padH, padV, padH, padV)
+            }
+            host.addView(row)
+            i = end
         }
     }
 
@@ -591,52 +621,24 @@ class EditorActivity : AppCompatActivity() {
             rootLayout.addView(it, LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
-        // 预览栏保持固定高度
         bottomStripWrap.layoutParams = LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, dp(96f))
     }
 
     /** 二级工具（选择栏 / 装裱面板 / 绘制栏）：横屏进右侧槽位；竖屏布局由 restackPortrait 负责 */
     private fun dockSecondary(land: Boolean) {
-        applySelBarLayout(land)
         applyDrawBarLayout(land)
         if (!land) return
 
         val chain = listOf(selectionBar, framingPanel, drawBar)
         chain.forEach { (it.parent as? ViewGroup)?.removeView(it) }
-        rightInner.addView(selectionBar, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        rightInner.addView(framingPanel, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        rightInner.addView(drawBar, LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-    }
-
-    /** 选择栏：竖屏两行横排（原位）；横屏拆成 9 项单列纵向排列 */
-    private fun applySelBarLayout(land: Boolean) {
-        selectionBar.orientation = LinearLayout.VERTICAL
-        for (i in 0 until selectionBar.childCount) {
-            val row = selectionBar.getChildAt(i) as? LinearLayout ?: continue
-            row.orientation = if (land) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL
-            row.gravity = if (land) Gravity.TOP else Gravity.CENTER
-            when {
-                land -> row.setPadding(0, 0, 0, 0)
-                i == 0 -> row.setPadding(dp(4f), dp(4f), dp(4f), 0)
-                else -> row.setPadding(dp(4f), 0, dp(4f), dp(4f))
-            }
-            for (j in 0 until row.childCount) {
-                val btn = row.getChildAt(j)
-                btn.layoutParams = LinearLayout.LayoutParams(
-                    if (land) ViewGroup.LayoutParams.MATCH_PARENT
-                    else ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT)
-                (btn as? TextView)?.apply {
-                    gravity = Gravity.CENTER
-                    if (land) setPadding(dp(10f), dp(6f), dp(10f), dp(6f))
-                    else setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
-                }
-            }
-        }
+        // 各组按 weight 占满整个槽高（同一时刻只显示一组，GONE 不占空间）
+        rightDock.addView(selectionBar, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        rightDock.addView(framingPanel, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
+        rightDock.addView(drawBar, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
     }
 
     /** 绘制栏：横屏纵向单列（每项铺满栏宽）；竖屏横向一行 */
@@ -647,9 +649,12 @@ class EditorActivity : AppCompatActivity() {
             val lp = drawBar.getChildAt(i).layoutParams as LinearLayout.LayoutParams
             if (land) {
                 lp.width = ViewGroup.LayoutParams.MATCH_PARENT
-                lp.rightMargin = 0; lp.topMargin = dp(3f); lp.bottomMargin = dp(3f)
+                lp.height = 0; lp.weight = 1f      // 均分栏高，完整充满
+                lp.rightMargin = 0; lp.topMargin = 0; lp.bottomMargin = 0
             } else {
                 lp.width = ViewGroup.LayoutParams.WRAP_CONTENT
+                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                lp.weight = 0f
                 lp.rightMargin = dp(5f); lp.topMargin = 0; lp.bottomMargin = 0
             }
             drawBar.getChildAt(i).layoutParams = lp
@@ -720,39 +725,27 @@ class EditorActivity : AppCompatActivity() {
      * - 展开态：迁移到看片台顶栏右侧，变为浅朱红胶囊的「收回」
      */
     private fun applyExpandBtnState() {
-        val target: ViewGroup = if (lightTableOpen) ltHeader else tools
-        // 始终显式给出布局参数：addView(child) 会复用 child 原有的 LayoutParams，
-        // 曾导致从看片台顶栏（固定高度）回到工具条后高度被锁死、文字被截断
-        val lp = when {
-            lightTableOpen -> LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.WRAP_CONTENT, dp(34f)).apply { rightMargin = dp(4f) }
-            isLandscape() -> LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            else -> LinearLayout.LayoutParams(
-                0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)   // 竖屏与其它工具等宽均分
-        }
-
-        if (expandBtn.parent !== target) {
-            (expandBtn.parent as? ViewGroup)?.removeView(expandBtn)
-            target.addView(expandBtn, lp)
-        } else {
-            expandBtn.layoutParams = lp
-        }
-
         expandBtn.gravity = Gravity.CENTER
-        expandBtn.setTextColor(0xFF1A1A18.toInt())
-        expandBtn.background = null        // 不加特殊底色，与其它工具钮一致
+        expandBtn.setTextColor(0xFF1A1A18.toInt())   // 与其它工具按钮同色，不做特殊强调
+        expandBtn.background = null
+        expandBtn.textSize = 15f
+        expandBtn.maxLines = 1
+        expandBtn.isSingleLine = true
         if (lightTableOpen) {
-            expandBtn.text = "∨"           // 收回（向下）
-            expandBtn.textSize = 15f
-            expandBtn.setPadding(dp(14f), dp(4f), dp(14f), dp(4f))
+            // 收回（∨）：移到看片台顶栏右侧
+            (expandBtn.parent as? ViewGroup)?.removeView(expandBtn)
+            ltHeader.addView(expandBtn, LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(30f)).apply { rightMargin = dp(6f) })
+            expandBtn.text = "∨"
+            expandBtn.setPadding(dp(12f), 0, dp(12f), 0)
             expandBtn.contentDescription = "收回看片台"
         } else {
-            expandBtn.text = "∧"           // 展开（向上）
-            expandBtn.textSize = 15f
-            expandBtn.setPadding(dp(14f), dp(9f), dp(14f), dp(9f))
+            // 展开（∧）：回到工具条末尾
+            expandBtn.text = "∧"
             expandBtn.contentDescription = "展开看片台"
         }
+        // 工具条成员变化（多/少一项）后重新分行
+        relayoutButtons(tools, toolButtons, 4, isLandscape())
     }
 
     @Suppress("DEPRECATION")
@@ -1112,18 +1105,21 @@ class EditorActivity : AppCompatActivity() {
         }
         if (canvas.selected != null) {
             val it = canvas.selected!!
-            // 行1 构成：删除 / 装裱 / 尺寸 / 编辑 —— 按元素类型控制可见性
-            (selectionBar.getChildAt(0) as LinearLayout).let { row ->
-                val isPhoto = it.type == Item.TYPE_PHOTO
-                val isExh = project.type == Project.TYPE_EXHIBITION
-                (row.getChildAt(1) as TextView).visibility =   // 装裱：照片与文字
-                    if (isPhoto || it.type == Item.TYPE_TEXT) View.VISIBLE else View.GONE
-                (row.getChildAt(2) as TextView).visibility =   // 尺寸：展览照片
-                    if (isPhoto && isExh) View.VISIBLE else View.GONE
-                (row.getChildAt(3) as TextView).visibility =   // 编辑：非照片
-                    if (isPhoto) View.GONE else View.VISIBLE
-            }
-            // 行2（复制/置顶/下移/转90°/跨页）全部常显，无需处理
+            val isPhoto = it.type == Item.TYPE_PHOTO
+            val isExh = project.type == Project.TYPE_EXHIBITION
+            // 0=删除 1=装裱 2=尺寸 3=编辑 4=复制 5=置顶 6=下移 7=转90° 8=跨页
+            selButtons.getOrNull(1)?.visibility =          // 装裱：照片与文字
+                if (isPhoto || it.type == Item.TYPE_TEXT) View.VISIBLE else View.GONE
+            selButtons.getOrNull(2)?.visibility =          // 尺寸：展览照片
+                if (isPhoto && isExh) View.VISIBLE else View.GONE
+            selButtons.getOrNull(3)?.visibility =          // 编辑：非照片
+                if (isPhoto) View.GONE else View.VISIBLE
+        }
+        // 可见集合变化 → 重新分行（均分铺满、每行不少于 3 个）
+        val sig = selButtons.joinToString("") { if (it.visibility == View.VISIBLE) "1" else "0" }
+        if (sig != selSig) {
+            selSig = sig
+            relayoutButtons(selectionBar, selButtons, 7, isLandscape())
         }
     }
 
