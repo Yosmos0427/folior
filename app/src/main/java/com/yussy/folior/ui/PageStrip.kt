@@ -232,6 +232,15 @@ class PageStrip @JvmOverloads constructor(
         }
     }
 
+    /** 同一时刻只允许一个删除层：收起除 keepPageId 之外所有可见项的覆盖层 */
+    private fun collapseOtherOverlays(keepPageId: String?) {
+        for (i in 0 until rv.childCount) {
+            val holder = rv.getChildViewHolder(rv.getChildAt(i)) as? StripVH ?: continue
+            val pid = project?.pages?.getOrNull(holder.bindingAdapterPosition)?.id ?: continue
+            if (pid != keepPageId) holder.hideOverlayNow()
+        }
+    }
+
     private fun setRevealed(pageId: String?) {
         if (revealedPageId == pageId) return
         revealedPageId = pageId
@@ -487,7 +496,14 @@ class PageStrip @JvmOverloads constructor(
                             val towardShow = if (verticalMode) axisD else -axisD
                             val p = (towardShow / h).coerceIn(0f, 1f)
                             if (p > 0f) {
-                                deleteOverlay.visibility = View.VISIBLE
+                                if (deleteOverlay.visibility != View.VISIBLE) {
+                                    // 本页刚开始滑出：清掉指向其它页的标记并收起它们的删除层
+                                    if (revealedPageId != null && revealedPageId != page.id) {
+                                        revealedPageId = null
+                                    }
+                                    collapseOtherOverlays(page.id)
+                                    deleteOverlay.visibility = View.VISIBLE
+                                }
                                 deleteOverlay.translationY = h * (1f - p)
                             }
                             if (towardShow > commit) revealCommitted = true
@@ -515,12 +531,20 @@ class PageStrip @JvmOverloads constructor(
             }
         }
 
-        /** 吸附：删除层完全盖住缩略图并保持固定 */
+        /** 吸附：删除层完全盖住缩略图并保持固定（同时收起其它页的删除层） */
         private fun settleOverlay(pageId: String) {
             revealedPageId = pageId
             revealCommitted = true
+            collapseOtherOverlays(pageId)
             deleteOverlay.visibility = View.VISIBLE
             deleteOverlay.animate().translationY(0f).setDuration(110).start()
+        }
+
+        /** 立即隐藏本项覆盖层（不动列表布局，供互斥收起使用） */
+        fun hideOverlayNow() {
+            deleteOverlay.animate().cancel()
+            deleteOverlay.translationY = cell.height.coerceAtLeast(1).toFloat()
+            deleteOverlay.visibility = View.INVISIBLE
         }
 
         /** 退出：删除层向下滑出并隐藏 */
