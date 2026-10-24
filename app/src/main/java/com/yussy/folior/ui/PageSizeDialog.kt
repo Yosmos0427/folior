@@ -13,7 +13,15 @@ import android.widget.TextView
 /** 宽×高（mm）输入对话框：新建自定义页面 / 墙体、修改单页尺寸。 */
 object PageSizeDialog {
 
-    fun show(ctx: Context, title: String, initW: Float, initH: Float, onDone: (Float, Float) -> Unit) {
+    /**
+     * 宽×高输入，可选同管本页底色。
+     * @param bg 非 null 时在对话框内显示「本页底色」色块（点击选色）
+     */
+    fun show(
+        ctx: Context, title: String, initW: Float, initH: Float,
+        bg: String? = null,
+        onDone: (w: Float, h: Float, bg: String?) -> Unit
+    ) {
         val d = ctx.resources.displayMetrics.density
         fun px(v: Float) = (v * d).toInt()
 
@@ -63,25 +71,29 @@ object PageSizeDialog {
             setPadding(px(3f), px(6f), 0, 0)
         })
 
+        var pickedBg: String? = null      // 仅记录用户实际选择的颜色；未选则保持继承项目默认色
+        if (bg != null) root.addView(makeBgRow(ctx, bg) { pickedBg = it })
+
         AlertDialog.Builder(ctx)
             .setTitle(title)
             .setView(root)
             .setPositiveButton("确定") { _, _ ->
                 val w = (wIn.text.toString().toFloatOrNull() ?: initW).coerceIn(30f, 2000f)
                 val h = (hIn.text.toString().toFloatOrNull() ?: initH).coerceIn(30f, 2000f)
-                onDone(w, h)
+                onDone(w, h, pickedBg)
             }
             .setNegativeButton("取消", null)
             .show()
     }
-}
 
+}
 
 /** 展览墙体：以米为单位输入，无实际上限（0.1 – 100 m），可选预设。 */
 fun showWall(
     ctx: Context, title: String, initWmm: Float, initHmm: Float,
     presets: List<Triple<String, Float, Float>> = emptyList(),
-    onDone: (Float, Float) -> Unit
+    bg: String? = null,
+    onDone: (w: Float, h: Float, bg: String?) -> Unit
 ) {
     val d = ctx.resources.displayMetrics.density
     fun px(v: Float) = (v * d).toInt()
@@ -165,6 +177,9 @@ fun showWall(
         setPadding(px(3f), px(8f), 0, 0)
     })
 
+    var pickedBg: String? = null          // 仅记录用户实际选择的颜色；未选则保持继承项目默认色
+    if (bg != null) root.addView(makeBgRow(ctx, bg) { pickedBg = it })
+
     AlertDialog.Builder(ctx)
         .setTitle(title)
         .setView(root)
@@ -173,8 +188,51 @@ fun showWall(
                 .coerceIn(100f, 100000f)
             val h = ((hIn.text.toString().toFloatOrNull() ?: (initHmm / 1000f)) * 1000f)
                 .coerceIn(100f, 100000f)
-            onDone(w, h)
+            onDone(w, h, pickedBg)
         }
         .setNegativeButton("取消", null)
         .show()
+}
+
+/**
+ * 「本页底色」行：左侧说明 + 右侧色块。色块显示当前颜色，点击打开调色板；
+ * 选色只更新色块，点「确定」才随尺寸一起提交。
+ */
+private fun makeBgRow(ctx: Context, initBg: String, onPick: (String) -> Unit): LinearLayout {
+    val d = ctx.resources.displayMetrics.density
+    fun px(v: Float) = (v * d).toInt()
+    val row = LinearLayout(ctx).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, px(16f), 0, 0)
+    }
+    row.addView(TextView(ctx).apply {
+        text = "本页底色"
+        textSize = 13f
+        setTextColor(0xFF1A1A18.toInt())
+    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+    var cur = initBg
+    val chip = TextView(ctx).apply {
+        text = ""
+        background = GradientDrawable().apply {
+            cornerRadius = 8f * d
+            setColor(android.graphics.Color.parseColor(cur))
+            setStroke(px(1f), 0xFFDDDDD6.toInt())
+        }
+        contentDescription = "选择本页底色"
+        setOnClickListener {
+            ColorPickerDialog.show(ctx, "本页底色", cur) { c ->
+                cur = c
+                onPick(c)
+                background = GradientDrawable().apply {
+                    cornerRadius = 8f * d
+                    setColor(android.graphics.Color.parseColor(c))
+                    setStroke(px(1f), 0xFFDDDDD6.toInt())
+                }
+            }
+        }
+    }
+    row.addView(chip, LinearLayout.LayoutParams(px(64f), px(34f)))
+    return row
 }

@@ -342,22 +342,24 @@ class EditorActivity : AppCompatActivity() {
         }
         toolBtn("＋照片") { pickPhotos() }
         toolBtn("＋文字") { addText() }
-        toolBtn("绘制") { setDrawMode(!drawMode) }
         toolBtn(if (project.type == Project.TYPE_EXHIBITION) "＋墙体" else "＋自定义页面") { addCustomSizePage() }
-        toolBtn("底色") { pageBg() }
+        toolBtn("绘制") { setDrawMode(!drawMode) }
         toolBtn("放映") { startActivity(Intent(this, ViewerActivity::class.java)
             .putExtra("id", project.id)
             .putExtra("page", pageIndex)) }
-        // 「展开看片台」并入工具条，位于「放映」右侧；展开后此按钮迁移到看片台顶栏并变为「收回」
+        // 「展开看片台」图标按钮（∧），位于「放映」右侧；展开后迁移到看片台顶栏变为（∨）
+        // 注：底色已并入「菜单 - 页面设置」，不再占用工具条
         expandBtn = TextView(this).apply {
-            text = "展开"
-            textSize = 13f
-            setTextColor(0xFFB5442A.toInt())
-            setPadding(dp(8f), dp(10f), dp(8f), dp(10f))
+            text = "∧"
+            textSize = 15f
+            setTextColor(0xFF1A1A18.toInt())
+            gravity = Gravity.CENTER
+            setPadding(dp(14f), dp(9f), dp(14f), dp(9f))
             contentDescription = "展开看片台"
             setOnClickListener { if (lightTableOpen) closeLightTable() else openLightTable() }
         }
-        tools.addView(expandBtn)
+        tools.addView(expandBtn, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         root.addView(tools)
 
         // ---- 页面条（竖屏在底部，横屏移到左侧）----
@@ -607,35 +609,34 @@ class EditorActivity : AppCompatActivity() {
      */
     private fun applyExpandBtnState() {
         val target: ViewGroup = if (lightTableOpen) ltHeader else tools
+        // 始终显式给出布局参数：addView(child) 会复用 child 原有的 LayoutParams，
+        // 曾导致从看片台顶栏（固定高度）回到工具条后高度被锁死、文字被截断
+        val lp = if (lightTableOpen)
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, dp(34f)).apply { rightMargin = dp(4f) }
+        else
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+
         if (expandBtn.parent !== target) {
             (expandBtn.parent as? ViewGroup)?.removeView(expandBtn)
-            if (lightTableOpen) {
-                target.addView(expandBtn, LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(32f)).apply {
-                    rightMargin = dp(4f)
-                })
-            } else {
-                target.addView(expandBtn)   // 追加到末尾 = 「放映」右侧
-            }
+            target.addView(expandBtn, lp)
+        } else {
+            expandBtn.layoutParams = lp
         }
-        expandBtn.setTextColor(0xFFB5442A.toInt())
+
+        expandBtn.gravity = Gravity.CENTER
+        expandBtn.setTextColor(0xFF1A1A18.toInt())
+        expandBtn.background = null        // 不加特殊底色，与其它工具钮一致
         if (lightTableOpen) {
-            expandBtn.text = "收回"
-            expandBtn.textSize = 12f
-            expandBtn.gravity = Gravity.CENTER
-            expandBtn.setPadding(dp(12f), 0, dp(12f), 0)
-            expandBtn.background = GradientDrawable().apply {
-                setColor(0x14B5442A)
-                setStroke(Math.max(1, dp(1f)), 0x33B5442A)
-                cornerRadius = dp(16f).toFloat()
-            }
+            expandBtn.text = "∨"           // 收回（向下）
+            expandBtn.textSize = 15f
+            expandBtn.setPadding(dp(14f), dp(4f), dp(14f), dp(4f))
             expandBtn.contentDescription = "收回看片台"
         } else {
-            expandBtn.text = "展开"
-            expandBtn.textSize = 13f
-            expandBtn.gravity = Gravity.CENTER
-            expandBtn.setPadding(dp(8f), dp(10f), dp(8f), dp(10f))
-            expandBtn.background = null
+            expandBtn.text = "∧"           // 展开（向上）
+            expandBtn.textSize = 15f
+            expandBtn.setPadding(dp(14f), dp(9f), dp(14f), dp(9f))
             expandBtn.contentDescription = "展开看片台"
         }
     }
@@ -722,7 +723,7 @@ class EditorActivity : AppCompatActivity() {
         val isExh = project.type == Project.TYPE_EXHIBITION
         if (isExh) {
             showWall(this, "新建墙体",
-                project.pageWmm, project.pageHmm, presets = WALL_PRESETS) { w, h ->
+                project.pageWmm, project.pageHmm, presets = WALL_PRESETS) { w, h, _ ->
                 project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h, bg = page().bg))
                 pageIndex += 1
                 refreshAll()
@@ -730,7 +731,7 @@ class EditorActivity : AppCompatActivity() {
             }
         } else {
             PageSizeDialog.show(this, "新建自定义页面尺寸",
-                project.pageWmm, project.pageHmm) { w, h ->
+                project.pageWmm, project.pageHmm) { w, h, _ ->
                 project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h, bg = page().bg))
                 pageIndex += 1
                 refreshAll()
@@ -739,21 +740,28 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
-    /** 修改当前页/墙尺寸：展览用米制墙体对话框（含展厅预设），摄影书用毫米对话框。 */
+    /**
+     * 页面设置：同一对话框内管理当前页/墙的尺寸与本页底色。
+     * 展览用米制墙体对话框（含展厅预设），摄影书用毫米对话框。
+     */
     private fun resizeCurrentPage() {
         val pg = page()
-        val apply: (Float, Float) -> Unit = { w, h ->
+        val apply: (Float, Float, String?) -> Unit = { w, h, bg ->
             pg.wmm = w; pg.hmm = h
+            if (bg != null) pg.bg = bg
             canvas.invalidateLayout()
             strip.refresh()
             scheduleSave()
         }
+        val curBg = pg.bg ?: project.defaultBg
         if (project.type == Project.TYPE_EXHIBITION)
-            showWall(this, "墙体尺寸", pg.widthMm(project), pg.heightMm(project),
-                presets = WALL_PRESETS) { w, h -> apply(w, h) }
+            showWall(this, "墙体设置", pg.widthMm(project), pg.heightMm(project),
+                presets = WALL_PRESETS, bg = curBg) { w, h, bg -> apply(w, h, bg) }
         else
-            PageSizeDialog.show(this, "页面尺寸",
-                pg.widthMm(project), pg.heightMm(project)) { w, h -> apply(w, h) }
+            PageSizeDialog.show(this, "页面设置",
+                pg.widthMm(project), pg.heightMm(project), bg = curBg) { w, h, bg ->
+                apply(w, h, bg)
+            }
     }
 
     /** 本次导入中超出墙面的提示（导入结束后统一展示） */
@@ -1021,15 +1029,6 @@ class EditorActivity : AppCompatActivity() {
         pageIndex += 1
         refreshAll()
         scheduleSave()
-    }
-
-    private fun pageBg() {
-        ColorPickerDialog.show(this, "本页底色",
-            page().bg ?: project.defaultBg) { c ->
-            page().bg = c
-            canvas.invalidate()
-            scheduleSave()
-        }
     }
 
     private fun projectSettings() {
