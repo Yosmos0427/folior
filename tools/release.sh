@@ -21,7 +21,7 @@ cd "$ROOT"
 "$GRADLE_BIN" assembleRelease --no-daemon
 
 APK="$ROOT/app/build/outputs/apk/release/app-release.apk"
-OUT="/workspace/页册Folior-v$VERSION.apk"
+OUT="/workspace/册页Folior-v$VERSION.apk"
 cp "$APK" "$OUT"
 echo "==> APK: $OUT"
 

@@ -15,6 +15,6 @@ git -C "$ROOT" worktree add --detach "$DIR" "$TAG"
 cd "$DIR"
 "$GRADLE_BIN" assembleRelease --no-daemon
 
-cp "$DIR/app/build/outputs/apk/release/app-release.apk" "/workspace/页册Folior-回滚-$TAG.apk"
-echo "==> 回滚版本已编译：/workspace/页册Folior-回滚-$TAG.apk"
+cp "$DIR/app/build/outputs/apk/release/app-release.apk" "/workspace/册页Folior-回滚-$TAG.apk"
+echo "==> 回滚版本已编译：/workspace/册页Folior-回滚-$TAG.apk"
 echo "==> 注意：如需把该版本恢复为当前开发线，执行 git revert / git reset 后另行提交"

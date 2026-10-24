@@ -34,6 +34,19 @@ class SettingsActivity : AppCompatActivity() {
         const val LIMIT_NONE = 0
         const val LIMIT_CUSTOM = -1
         val LIMIT_PRESETS = intArrayOf(20, 50, 100)
+
+        const val ABOUT_P1 = "社交媒体习惯把照片切成一张张孤立的图片，但摄影师想说的话往往不在单独的一张图里——" +
+                "它们的顺序、间隔与并置之间，有许多被忽视的表达空间。"
+        const val ABOUT_P2 = "「册页」为呈现方式而存在：快速便捷的编排工具与导出交付，能够跟得上社交媒体的速度。" +
+                "我们提供一个把照片编辑成册的工作台——照片排序、页面设计、文字介绍、装裱设计、手绘标注，" +
+                "都可以在这里一次性完成。你可以将完成的电子册页导出分享，或输出一本 PDF 电子册，传播到社交平台上。"
+        const val ABOUT_MOTTO = "我们鼓励一种更完整的摄影表达方式。"
+    }
+
+    private fun versionName(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+    } catch (e: Exception) {
+        ""
     }
 
     private fun dp(v: Float) = (v * d).toInt()
@@ -101,6 +114,53 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(dp(2f), dp(22f), dp(2f), 0)
         }
         content.addView(summary)
+
+        // ---- 关于 ----
+        content.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(1f)).apply { topMargin = dp(26f) }
+            setBackgroundColor(0xFFE6E6DF.toInt())
+        })
+        content.addView(sectionLabel("关于"))
+
+        val aboutHead = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(2f), 0, dp(2f), 0)
+        }
+        aboutHead.addView(TextView(this).apply {
+            text = "册页"
+            textSize = 16f
+            setTextColor(0xFF1A1A18.toInt())
+        })
+        aboutHead.addView(TextView(this).apply {
+            text = "Folior"
+            textSize = 11.5f
+            setTextColor(0xFFA8A8A0.toInt())
+            setPadding(dp(8f), dp(2f), 0, 0)
+        })
+        aboutHead.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        aboutHead.addView(TextView(this).apply {
+            text = "v${versionName()}"
+            textSize = 11.5f
+            setTextColor(0xFFA8A8A0.toInt())
+        })
+        content.addView(aboutHead)
+
+        content.addView(TextView(this).apply {
+            text = "$ABOUT_P1\n\n$ABOUT_P2"
+            textSize = 12f
+            setTextColor(0xFF6B6B66.toInt())
+            setLineSpacing(dp(5f).toFloat(), 1.45f)
+            setPadding(dp(2f), dp(10f), dp(2f), 0)
+        })
+        content.addView(TextView(this).apply {
+            text = ABOUT_MOTTO
+            textSize = 12.5f
+            setTextColor(0xFF1A1A18.toInt())
+            setLineSpacing(dp(4f).toFloat(), 1.4f)
+            setPadding(dp(2f), dp(14f), dp(2f), 0)
+        })
 
         root.addView(ScrollView(this).apply {
             isVerticalScrollBarEnabled = false

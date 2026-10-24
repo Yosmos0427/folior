@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">页册 Folior</string>
+    <string name="app_name">册页</string>
 
     <style name="Theme.Folior" parent="Theme.Material3.Light.NoActionBar">
         <item name="colorPrimary">@color/ink</item>

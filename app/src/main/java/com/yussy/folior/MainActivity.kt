@@ -60,7 +60,7 @@ class MainActivity : AppCompatActivity() {
             setPadding((20 * d).toInt(), (28 * d).toInt(), (20 * d).toInt(), (10 * d).toInt())
         }
         top.addView(TextView(this).apply {
-            text = "页册"
+            text = "册页"
             textSize = 26f
             setTextColor(0xFF1A1A18.toInt())
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
