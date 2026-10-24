@@ -427,6 +427,8 @@ class EditorActivity : AppCompatActivity() {
 
         canvas.project = project
         canvas.onSelectionChanged = { updateBars() }
+        // 点画布任意处 = 收起预览栏已固定的删除按钮
+        canvas.onTouchDown = { strip.hideReveal() }
         canvas.onModified = { scheduleSave(); strip.refresh() }
         canvas.onFlip = { dir -> flipSpread(dir) }
         canvas.onEditText = { it -> editItem(it) }

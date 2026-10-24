@@ -45,7 +45,8 @@ class PageStrip @JvmOverloads constructor(
     /** 滑动呼出删除按钮后点击删除：参数为页索引 */
     var onStripDelete: ((Int) -> Unit)? = null
 
-    private var revealedPos = -1
+    /** 已呼出删除按钮的页 id（用 id 而非位置：滚动、重排、View 复用后都能正确匹配） */
+    private var revealedPageId: String? = null
 
     /** 工作区拖照片悬停的目标格（高亮），-1 = 无 */
     private var dragTargetPos = -1
@@ -127,8 +128,8 @@ class PageStrip @JvmOverloads constructor(
                 if (actionState == ItemTouchHelper.ACTION_STATE_DRAG && vh != null) {
                     vh.itemView.alpha = 0.55f
                     vh.itemView.scaleX = 1.04f; vh.itemView.scaleY = 1.04f
-                    if (revealedPos == vh.bindingAdapterPosition) {
-                        revealedPos = -1
+                    if (revealedPageId != null) {
+                        revealedPageId = null
                         stripAdapter.notifyDataSetChanged()
                     }
                 }
@@ -154,7 +155,7 @@ class PageStrip @JvmOverloads constructor(
             if (vertical) LinearLayoutManager.VERTICAL else LinearLayoutManager.HORIZONTAL,
             false)
         rv.recycledViewPool.clear()
-        revealedPos = -1
+        revealedPageId = null
         dragTargetPos = -1
         applyMode()
         refresh()
@@ -213,10 +214,16 @@ class PageStrip @JvmOverloads constructor(
     }
 
     fun hideReveal() {
-        if (revealedPos >= 0) {
-            revealedPos = -1
+        if (revealedPageId != null) {
+            revealedPageId = null
             stripAdapter.notifyDataSetChanged()
         }
+    }
+
+    private fun setRevealed(pageId: String?) {
+        if (revealedPageId == pageId) return
+        revealedPageId = pageId
+        stripAdapter.notifyDataSetChanged()
     }
 
     private fun revealPx(): Float {
@@ -225,6 +232,7 @@ class PageStrip @JvmOverloads constructor(
     }
 
     private fun selectFromStrip(pos: Int) {
+        revealedPageId = null       // 点其它页 / 点空白处 → 收起固定
         currentIndex = pos
         onPageSelected?.invoke(pos)
         stripAdapter.notifyDataSetChanged()
@@ -334,8 +342,8 @@ class PageStrip @JvmOverloads constructor(
             holder.badge.width = (16 * d).toInt()
             holder.badge.setPadding(if (verticalMode) (3 * d).toInt() else 0, 0, 0, 0)
 
-            // 滑动呼出删除按钮的状态
-            val revealed = revealedPos == pos
+            // 滑动呼出删除按钮的状态（按页 id 匹配，滚动后不丢失）
+            val revealed = revealedPageId != null && revealedPageId == page.id
             val reveal = revealPx()
             holder.content.translationY = if (revealed && !verticalMode) -reveal else 0f
             holder.content.translationX = if (revealed && verticalMode) reveal else 0f
@@ -394,8 +402,14 @@ class PageStrip @JvmOverloads constructor(
             content.setOnTouchListener { _, ev ->
                 val pos = bindingAdapterPosition
                 if (pos == RecyclerView.NO_POSITION) return@setOnTouchListener false
+                val page = project?.pages?.getOrNull(pos)
+                    ?: return@setOnTouchListener false
+                val revealed = revealedPageId == page.id
                 val reveal = revealPx()
                 val slop = 3f * d
+                // 呼出/收起的判定距离：轻轻一滑（10dp）即固定，不用滑到顶
+                val commit = 10f * d
+
                 when (ev.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         downX = ev.x; downY = ev.y; moved = false; axisLocked = false
@@ -410,7 +424,7 @@ class PageStrip @JvmOverloads constructor(
                         if (!axisLocked && Math.abs(axisD) > slop) {
                             axisLocked = true
                             if (Math.abs(axisD) > Math.abs(otherD) * 1.2f) {
-                                // 沿删除滑动轴主导：禁止父级（RecyclerView 滚动）拦截手势
+                                // 删除滑动轴主导：本手势内不再交给 RecyclerView 滚动
                                 rv.requestDisallowInterceptTouchEvent(true)
                             }
                         }
@@ -424,20 +438,31 @@ class PageStrip @JvmOverloads constructor(
                         true
                     }
                     MotionEvent.ACTION_CANCEL -> {
-                        // 即使被父级拦截，也按已滑动距离判定是否呼出
-                        val dx = ev.x - downX; val dy = ev.y - downY
-                        val delta = if (verticalMode) dx else dy
-                        if (Math.abs(delta) > reveal * 0.35f) revealedPos = pos
-                        stripAdapter.notifyDataSetChanged()
+                        // 被父级拦截（滚动）时也按已滑距离判定，避免呼出状态闪断
+                        val delta = if (verticalMode) ev.x - downX else ev.y - downY
+                        val towardShow = if (verticalMode) delta else -delta
+                        if (towardShow > commit) setRevealed(page.id)
+                        else stripAdapter.notifyDataSetChanged()
                         true
                     }
                     MotionEvent.ACTION_UP -> {
                         val delta = if (verticalMode) ev.x - downX else ev.y - downY
-                        if (!moved) {
-                            if (revealedPos == pos) hideReveal() else selectFromStrip(pos)
-                        } else {
-                            if (Math.abs(delta) > reveal * 0.35f) revealedPos = pos
-                            stripAdapter.notifyDataSetChanged()
+                        // 呼出方向为正：竖屏上滑（dy<0）、横屏右滑（dx>0）
+                        val towardShow = if (verticalMode) delta else -delta
+                        when {
+                            !moved -> {
+                                // 轻点：已固定的收起，否则选中该页
+                                if (revealed) setRevealed(null) else selectFromStrip(pos)
+                            }
+                            towardShow > commit && !revealed -> {
+                                // 轻轻滑出即固定，等用户点删除 / 下滑取消
+                                setRevealed(page.id)
+                            }
+                            towardShow < -commit && revealed -> {
+                                // 反向滑回 = 取消固定
+                                setRevealed(null)
+                            }
+                            else -> stripAdapter.notifyDataSetChanged()
                         }
                         true
                     }

@@ -39,6 +39,8 @@ class PageCanvas @JvmOverloads constructor(
 
     var onSelectionChanged: ((Item?) -> Unit)? = null
     var onModified: (() -> Unit)? = null
+    /** 画布上任意按下一律回调（外部据此收起预览栏的删除按钮固定态等临时 UI） */
+    var onTouchDown: (() -> Unit)? = null
     var onFlip: ((Int) -> Unit)? = null          // -1 上一跨页 / +1 下一跨页
     var onSpanResult: ((Boolean) -> Unit)? = null
     /** 双击文字：请求编辑（Activity 打开文字对话框） */
@@ -733,6 +735,7 @@ class PageCanvas @JvmOverloads constructor(
         gesture.onTouchEvent(ev)
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                onTouchDown?.invoke()
                 if (selected != null && hitResizeHandle(ev.x, ev.y)) {
                     resizing = true
                     val sel = selected!!
