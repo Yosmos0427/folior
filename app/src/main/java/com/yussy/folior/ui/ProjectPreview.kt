@@ -19,9 +19,10 @@ import kotlin.math.sqrt
  * 项目预览图：把全部页面 / 墙体按顺序平铺成**一张图片**，用于整体浏览项目概况。
  *
  * 布局规则：
- *  - 摄影书：列数取**偶数**，并在封面之前留一格空位——于是从第 2 页起，同一行的左右两页
+ *  - 列数固定为 4 / 6 / 8 三档（页数越多才升一档），**优先向下加行**：
+ *    手机竖屏观看时，偏竖长的整图更易看、单页缩略图也更大。
+ *  - 摄影书在封面之前留一格空位——于是从第 2 页起，同一行的左右两页
  *    正好对应"翻开时的左页与右页"（2|3、4|5…）；封底单独落在最后一行也没关系。
- *  - 展览：无明显对开关系，取近似方形列数，并避免末行只剩一个。
  *
  * 尺寸不固定：单格以 420px 为基准，总像素超出内存预算时自动等比缩小。
  */
@@ -56,7 +57,7 @@ object ProjectPreview {
         val lead = if (isBook) 1 else 0
         val slotCount = n + lead
 
-        val cols = if (isBook) evenCols(slotCount) else autoCols(slotCount)
+        val cols = colsFor(slotCount)
         val rows = ceil(slotCount.toDouble() / cols).toInt()
 
         // 每个格位对应的高宽比；空位（封面前的间隔）为 0
@@ -128,18 +129,15 @@ object ProjectPreview {
         return bmp
     }
 
-    /** 摄影书：偶数列表（奇数则向上取偶），保证同一行左右两页成对 */
-    private fun evenCols(total: Int): Int {
-        var c = ceil(sqrt(total.toDouble())).toInt()
-        if (c % 2 == 1) c += 1
-        return c.coerceIn(2, 12)
-    }
-
-    /** 展览：近似方形，并避免"最后一行只剩一个" */
-    private fun autoCols(total: Int): Int {
-        var c = ceil(sqrt(total.toDouble())).toInt().coerceIn(1, 12)
-        if (total > c && total % c == 1) c = if (c < 12) c + 1 else c - 1
-        return c
+    /**
+     * 列数：固定为 4 / 6 / 8 三档，**优先向下加行**而不是增列。
+     * 以手机竖屏观看为先——整体图偏竖长比偏横宽更好看，缩略图也更大。
+     * 三档都是偶数，因此摄影书"同一行左右两页成对"自然成立。
+     */
+    private fun colsFor(slots: Int): Int = when {
+        slots <= 32 -> 4       // 最多 8 行
+        slots <= 72 -> 6       // 最多 12 行
+        else -> 8
     }
 
     private class Layout(val totalW: Int, val totalH: Int, val rowHeights: IntArray)
