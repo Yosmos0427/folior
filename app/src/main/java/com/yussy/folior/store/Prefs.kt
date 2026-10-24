@@ -21,6 +21,8 @@ object Prefs {
     private const val K_DPI_MODE = "pdf_dpi_mode_v2"
     private const val K_DPI_CUSTOM = "pdf_dpi_custom"
     private const val K_LIMIT_MB = "pdf_limit_mb"
+    private const val K_PREVIEW_BG = "preview_bg_color"
+    private const val K_PREVIEW_KEEP_BLANK = "preview_keep_blank"
 
     private fun sp(c: Context) = c.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
@@ -67,5 +69,22 @@ object Prefs {
     fun pdfLimitLabel(c: Context): String {
         val mb = pdfLimitMb(c)
         return if (mb <= 0) "体积不限" else "上限 $mb MB"
+    }
+
+    // ---------------- 预览图导出 ----------------
+
+    /** 预览图背景色（ARGB），默认白色 */
+    fun previewBg(c: Context): Int = sp(c).getInt(K_PREVIEW_BG, 0xFFFFFFFF.toInt())
+
+    fun setPreviewBg(c: Context, color: Int) {
+        sp(c).edit().putInt(K_PREVIEW_BG, color).apply()
+    }
+
+    /** 预览图是否保留空白页（未放置任何元素的页面），默认保留 */
+    fun previewKeepBlank(c: Context): Boolean =
+        sp(c).getBoolean(K_PREVIEW_KEEP_BLANK, true)
+
+    fun setPreviewKeepBlank(c: Context, keep: Boolean) {
+        sp(c).edit().putBoolean(K_PREVIEW_KEEP_BLANK, keep).apply()
     }
 }

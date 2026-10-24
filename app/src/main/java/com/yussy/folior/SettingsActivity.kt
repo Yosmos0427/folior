@@ -12,6 +12,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.yussy.folior.store.Prefs
+import com.yussy.folior.ui.ColorPickerDialog
 
 /**
  * 全局设置（独立页面，非弹窗）：
@@ -24,6 +25,7 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var dpiInput: EditText
     private lateinit var limitInput: EditText
     private lateinit var summary: TextView
+    private lateinit var blankCheck: TextView
 
     /** 精度档 → 勾选标记 */
     private val dpiChecks = ArrayList<Pair<String, TextView>>()
@@ -90,15 +92,18 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(dp(20f), dp(4f), dp(20f), dp(32f))
         }
 
-        content.addView(sectionLabel("PDF 导出 · 精度"))
-        content.addView(hint("精度决定页面渲染分辨率。72 dpi 适合屏幕与邮件分享；192 dpi 适合高质量屏幕查看与普通打印；300 dpi 为印刷级。"))
+        content.addView(sectionLabel("PDF 导出"))
+        content.addView(hint("导出 PDF 的画质与文件大小，两项设置相互独立。"))
+
+        content.addView(subLabel("精度"))
+        content.addView(hint("72 dpi 适合屏幕与邮件分享；192 dpi 适合高质量屏幕查看与普通打印；300 dpi 为印刷级。"))
 
         content.addView(dpiRow(Prefs.DPI_LIGHT.toString(), "轻量", "72 dpi · 体积最小，屏幕阅读与快速分享"))
         content.addView(dpiRow(Prefs.DPI_STANDARD.toString(), "标准", "192 dpi · 清晰度与体积平衡（推荐）"))
         content.addView(dpiRow(Prefs.DPI_FINE.toString(), "精细", "300 dpi · 印刷级画质"))
         content.addView(dpiCustomBlock())
 
-        content.addView(sectionLabel("PDF 导出 · 体积上限"))
+        content.addView(subLabel("体积上限"))
         content.addView(hint("默认不限制。设置上限后，导出完成后若超出，会对 PDF 内的图片重新压缩（不会重新渲染页面）。压缩到最低画质仍超出时，仍会输出文件并提示实际大小。"))
 
         content.addView(limitRow(LIMIT_NONE, "无上限", "完整保留所选精度的画质"))
@@ -113,6 +118,12 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(dp(2f), dp(22f), dp(2f), 0)
         }
         content.addView(summary)
+
+        // ---- 预览图导出 ----
+        content.addView(sectionLabel("预览图导出"))
+        content.addView(hint("「菜单 → 导出项目预览」生成一张包含全部页面的图片，用于整体浏览或一次分享整册结构。摄影书按偶数列排列，封面之前留一格间隔，便于成对查看翻开时的左右页。"))
+        content.addView(previewBgRow())
+        content.addView(previewKeepBlankRow())
 
         // ---- 关于 ----
         content.addView(View(this).apply {
@@ -174,12 +185,110 @@ class SettingsActivity : AppCompatActivity() {
         setPadding(dp(2f), dp(22f), 0, dp(6f))
     }
 
+    /** 大栏内的子标题 */
+    private fun subLabel(text: String) = TextView(this).apply {
+        this.text = text
+        textSize = 12.5f
+        setTextColor(0xFF6B6B66.toInt())
+        setPadding(dp(2f), dp(16f), 0, dp(2f))
+    }
+
     private fun hint(text: String) = TextView(this).apply {
         this.text = text
         textSize = 11.5f
         setTextColor(0xFFA8A8A0.toInt())
         setLineSpacing(0f, 1.35f)
         setPadding(dp(2f), 0, dp(2f), dp(8f))
+    }
+
+    /** 预览图背景色：行 + 右侧色块 */
+    private fun previewBgRow(): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(2f), dp(13f), dp(2f), dp(13f))
+            isClickable = true
+        }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        col.addView(TextView(this).apply {
+            text = "背景色"
+            textSize = 15f
+            setTextColor(0xFF1A1A18.toInt())
+        })
+        col.addView(TextView(this).apply {
+            text = "预览图的底色，默认白色"
+            textSize = 11.5f
+            setTextColor(0xFFA8A8A0.toInt())
+            setPadding(0, dp(3f), 0, 0)
+        })
+        row.addView(col)
+
+        val chip = TextView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(64f), dp(34f))
+            background = bgChipDrawable(Prefs.previewBg(this@SettingsActivity))
+        }
+        row.addView(chip)
+        row.setOnClickListener { pickPreviewBg(chip) }
+        return row
+    }
+
+    private fun bgChipDrawable(color: Int) = GradientDrawable().apply {
+        cornerRadius = 8f * d
+        setColor(color)
+        setStroke(dp(1f), 0xFFDDDDD6.toInt())
+    }
+
+    private fun pickPreviewBg(chip: TextView) {
+        val hex = String.format("#%06X", 0xFFFFFF and Prefs.previewBg(this))
+        ColorPickerDialog.show(this, "预览图背景色", hex) { c ->
+            val color = try {
+                android.graphics.Color.parseColor(c)
+            } catch (e: Exception) {
+                return@show
+            }
+            Prefs.setPreviewBg(this, color)
+            chip.background = bgChipDrawable(color)
+        }
+    }
+
+    /** 保留空白页：行 + 右侧开/关标记，点击切换 */
+    private fun previewKeepBlankRow(): LinearLayout {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(2f), dp(13f), dp(2f), dp(13f))
+            isClickable = true
+            setOnClickListener {
+                Prefs.setPreviewKeepBlank(this@SettingsActivity, !Prefs.previewKeepBlank(this@SettingsActivity))
+                refreshSelectionOnly()
+            }
+        }
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        col.addView(TextView(this).apply {
+            text = "保留空白页"
+            textSize = 15f
+            setTextColor(0xFF1A1A18.toInt())
+        })
+        col.addView(TextView(this).apply {
+            text = "未放置任何内容的页面也出现在预览图中"
+            textSize = 11.5f
+            setTextColor(0xFFA8A8A0.toInt())
+            setPadding(0, dp(3f), 0, 0)
+        })
+        row.addView(col)
+
+        blankCheck = TextView(this).apply {
+            textSize = 16f
+            setPadding(dp(12f), 0, dp(4f), 0)
+        }
+        row.addView(blankCheck)
+        return row
     }
 
     /** 通用选项行：标题 + 说明 + 右侧 ✓ */
@@ -345,6 +454,14 @@ class SettingsActivity : AppCompatActivity() {
         }
         limitInput.alpha = if (limitMb > 0 && limitMb !in LIMIT_PRESETS) 1f else 0.6f
         summary.text = "当前：${Prefs.pdfDpi(this)} dpi · ${Prefs.pdfLimitLabel(this)}"
+        updateBlankCheck()
+    }
+
+    /** 保留空白页的开/关标记 */
+    private fun updateBlankCheck() {
+        val on = Prefs.previewKeepBlank(this)
+        blankCheck.text = if (on) "✓" else "–"
+        blankCheck.setTextColor(if (on) 0xFFB5442A.toInt() else 0xFFC0C0BA.toInt())
     }
 
     private fun refresh() {
@@ -368,5 +485,6 @@ class SettingsActivity : AppCompatActivity() {
         if (customOn && !limitInput.hasFocus()) limitInput.setText(limitMb.toString())
 
         summary.text = "当前：${Prefs.pdfDpi(this)} dpi · ${Prefs.pdfLimitLabel(this)}"
+        updateBlankCheck()
     }
 }

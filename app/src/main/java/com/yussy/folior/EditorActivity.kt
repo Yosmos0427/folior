@@ -1679,11 +1679,15 @@ class EditorActivity : AppCompatActivity() {
                     Toast.makeText(this, "项目中没有页面", Toast.LENGTH_SHORT).show()
                     return
                 }
+                val previewBg = Prefs.previewBg(this)
+                val keepBlank = Prefs.previewKeepBlank(this)
                 val ui = progressUi("正在生成预览图", "准备中…")
                 Thread {
                     var err: String? = null
                     try {
-                        val bmp = ProjectPreview.build(this, project) { done, total ->
+                        val bmp = ProjectPreview.build(
+                            this, project, previewBg, keepBlank
+                        ) { done, total ->
                             val pct = (done * 100 / total.coerceAtLeast(1)).coerceIn(0, 100)
                             runOnUiThread {
                                 ui.msg.text = "渲染 $done / $total  ·  $pct%"
