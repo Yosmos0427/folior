@@ -200,6 +200,22 @@ class PageCanvas @JvmOverloads constructor(
     fun pageOf(item: Item): Page? =
         project?.pages?.firstOrNull { pg -> pg.items.any { it === item } }
 
+    /** 当前可见页面（单页/跨页）的联合矩形，用于判断点击是否落在页面左右两侧的空白 */
+    private fun visiblePagesRect(): RectF? {
+        var l = Float.MAX_VALUE; var r = -Float.MAX_VALUE
+        var t = Float.MAX_VALUE; var b = -Float.MAX_VALUE
+        var any = false
+        for (s in slots) {
+            if (s.index < 0) continue
+            any = true
+            if (s.rect.left < l) l = s.rect.left
+            if (s.rect.right > r) r = s.rect.right
+            if (s.rect.top < t) t = s.rect.top
+            if (s.rect.bottom > b) b = s.rect.bottom
+        }
+        return if (any) RectF(l, t, r, b) else null
+    }
+
     private fun slotOf(item: Item): Slot? {
         val owner = pageOf(item) ?: return null
         return slots.firstOrNull { it.index >= 0 && project?.pages?.getOrNull(it.index) === owner }
@@ -847,10 +863,24 @@ class PageCanvas @JvmOverloads constructor(
                 onStripHighlight?.invoke(-1)
                 if (multiActive || dragging) onModified?.invoke()
                 val dx = ev.x - emptyDownX
-                if (!hasItemAtDown && !multiActive &&
-                    abs(dx) > 70f * resources.displayMetrics.density &&
-                    abs(dx) > abs(ev.y - emptyDownY) * 1.4f) {
+                val dy = ev.y - emptyDownY
+                val d = resources.displayMetrics.density
+                val canFlip = isUp && !multiActive && !resizing && !reordering
+                // 单指横向滑动：整个工作区都生效（落点在照片上也翻页），
+                // 只有"正在拖动已选中的元素"时才让位给移动操作
+                val swiped = abs(dx) > 70f * d && abs(dx) > abs(dy) * 1.4f
+                // 轻点页面左右两侧的空白：按方向翻页
+                val tapped = abs(dx) < 12f * d && abs(dy) < 12f * d
+                if (canFlip && swiped && !dragging) {
                     onFlip?.invoke(if (dx < 0) 1 else -1)
+                } else if (canFlip && tapped && !hasItemAtDown && !dragging) {
+                    val pr = visiblePagesRect()
+                    if (pr != null) {
+                        when {
+                            ev.x < pr.left -> onFlip?.invoke(-1)    // 页面左侧空白 → 上一页
+                            ev.x > pr.right -> onFlip?.invoke(1)    // 页面右侧空白 → 下一页
+                        }
+                    }
                 }
                 multiActive = false
                 dragging = false
