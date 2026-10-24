@@ -348,7 +348,7 @@ class EditorActivity : AppCompatActivity() {
         }
         toolBtn("＋照片") { pickPhotos() }
         toolBtn("＋文字") { addText() }
-        toolBtn(if (project.type == Project.TYPE_EXHIBITION) "＋墙体" else "＋页面") { addCustomSizePage() }
+        toolBtn(if (project.type == Project.TYPE_EXHIBITION) "＋墙体" else "＋页面") { addPageOptions() }
         toolBtn("绘制") { setDrawMode(!drawMode) }
         toolBtn("放映") { startActivity(Intent(this, ViewerActivity::class.java)
             .putExtra("id", project.id)
@@ -746,7 +746,8 @@ class EditorActivity : AppCompatActivity() {
             expandBtn.setPadding(dp(12f), 0, dp(12f), 0)
             expandBtn.contentDescription = "收回看片台"
         } else {
-            // 展开（∧）：回到工具条末尾
+            // 展开（∧）：必须先摘离顶栏，否则重排时会被判定为"已迁移"而丢失
+            (expandBtn.parent as? ViewGroup)?.removeView(expandBtn)
             expandBtn.text = "∧"
             expandBtn.contentDescription = "展开看片台"
         }
@@ -837,7 +838,7 @@ class EditorActivity : AppCompatActivity() {
         if (isExh) {
             showWall(this, "新建墙体",
                 project.pageWmm, project.pageHmm, presets = WALL_PRESETS) { w, h, _ ->
-                project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h, bg = page().bg))
+                project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h))
                 pageIndex += 1
                 refreshAll()
                 scheduleSave()
@@ -845,7 +846,7 @@ class EditorActivity : AppCompatActivity() {
         } else {
             PageSizeDialog.show(this, "新建自定义页面尺寸",
                 project.pageWmm, project.pageHmm) { w, h, _ ->
-                project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h, bg = page().bg))
+                project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h))
                 pageIndex += 1
                 refreshAll()
                 scheduleSave()
@@ -1156,8 +1157,39 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun addPage() {
-        project.pages.add(pageIndex + 1, Page(bg = page().bg))
+        // 空白页 = 项目设置的默认页面（尺寸与底色都跟随项目，不继承当前页）
+        project.pages.add(pageIndex + 1, Page())
         pageIndex += 1
+        refreshAll()
+        scheduleSave()
+    }
+
+    /** 「＋页面 / ＋墙体」选项：新建空白页（可自定义尺寸）或复制当前页 */
+    private fun addPageOptions() {
+        val isExh = project.type == Project.TYPE_EXHIBITION
+        val options = if (isExh)
+            arrayOf("新建墙体（自定义尺寸）", "复制当前墙体")
+        else
+            arrayOf("新建空白页面（自定义尺寸）", "复制当前页面")
+        AlertDialog.Builder(this)
+            .setItems(options) { _, which ->
+                if (which == 0) addCustomSizePage() else duplicateCurrentPage()
+            }
+            .show()
+    }
+
+    /**
+     * 复制当前页（含全部元素）并插入到其后。
+     * 用 JSON 往返做深拷贝，再为页与每个元素分配新 id —— 避免与源页共享可变对象或 id。
+     */
+    private fun duplicateCurrentPage() {
+        val src = page()
+        val copy = Page.fromJson(src.toJson())
+        copy.id = java.util.UUID.randomUUID().toString()
+        copy.items.forEach { it.id = java.util.UUID.randomUUID().toString() }
+        project.pages.add(pageIndex + 1, copy)
+        pageIndex += 1
+        canvas.select(null)
         refreshAll()
         scheduleSave()
     }
