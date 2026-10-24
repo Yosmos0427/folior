@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -162,6 +163,31 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** 长按菜单：就地重命名项目（不进入编辑器） */
+    private fun renameProject(p: Project) {
+        val d = resources.displayMetrics.density
+        val input = EditText(this).apply {
+            setText(p.title)
+            setSelection(p.title.length)
+            setSingleLine()
+            setTextSize(16f)
+            setPadding((16 * d).toInt(), (12 * d).toInt(), (16 * d).toInt(), (12 * d).toInt())
+        }
+        AlertDialog.Builder(this)
+            .setTitle("重命名")
+            .setView(input)
+            .setPositiveButton("确定") { _, _ ->
+                val name = input.text.toString().trim()
+                if (name.isEmpty()) return@setPositiveButton
+                if (name == p.title) return@setPositiveButton
+                p.title = name
+                Store.save(this, p)
+                load()
+            }
+            .setNegativeButton("取消", null)
+            .show()
+    }
+
     private fun exportProjectFile(p: Project) {
         pendingExport = p
         Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -195,11 +221,12 @@ class MainActivity : AppCompatActivity() {
             holder.itemView.setOnClickListener { open(p) }
             holder.itemView.setOnLongClickListener {
                 AlertDialog.Builder(this@MainActivity)
-                    .setItems(arrayOf("打开", "导出工程文件 (.folio)", "删除")) { _, which ->
+                    .setItems(arrayOf("打开", "重命名", "导出工程文件 (.folio)", "删除")) { _, which ->
                         when (which) {
                             0 -> open(p)
-                            1 -> exportProjectFile(p)
-                            2 -> AlertDialog.Builder(this@MainActivity)
+                            1 -> renameProject(p)
+                            2 -> exportProjectFile(p)
+                            3 -> AlertDialog.Builder(this@MainActivity)
                                 .setTitle("删除「${p.title}」？")
                                 .setPositiveButton("删除") { _, _ ->
                                     Store.delete(this@MainActivity, p.id)

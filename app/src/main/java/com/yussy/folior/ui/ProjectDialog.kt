@@ -228,7 +228,7 @@ object ProjectDialog {
 
         val dialog = AlertDialog.Builder(ctx)
             .setTitle(if (edit) "项目设置" else "新建照片集")
-            .setView(root)
+            .setView(scrollableDialogContent(ctx, root))
             .setPositiveButton(if (edit) "保存" else "创建", null)
             .setNegativeButton("取消", null)
             .create()

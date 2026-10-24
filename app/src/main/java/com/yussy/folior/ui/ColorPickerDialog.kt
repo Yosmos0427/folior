@@ -137,7 +137,7 @@ object ColorPickerDialog {
         row.addView(input)
         row.addView(ok)
         root.addView(row)
-        d.setContentView(root)
+        d.setContentView(scrollableDialogContent(ctx, root))
         d.show()
     }
 }

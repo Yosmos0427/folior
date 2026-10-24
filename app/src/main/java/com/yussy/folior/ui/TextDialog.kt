@@ -84,7 +84,7 @@ object TextDialog {
 
         AlertDialog.Builder(ctx)
             .setTitle("文字")
-            .setView(root)
+            .setView(scrollableDialogContent(ctx, root))
             .setPositiveButton("确定") { _, _ ->
                 val fs = (fontInput.text.toString().toFloatOrNull() ?: 40f) / 1000f
                 onDone(input.text.toString(), fs.coerceIn(0.005f, 0.5f),

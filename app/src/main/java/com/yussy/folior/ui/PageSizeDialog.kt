@@ -76,7 +76,7 @@ object PageSizeDialog {
 
         AlertDialog.Builder(ctx)
             .setTitle(title)
-            .setView(root)
+            .setView(scrollableDialogContent(ctx, root))
             .setPositiveButton("确定") { _, _ ->
                 val w = (wIn.text.toString().toFloatOrNull() ?: initW).coerceIn(30f, 2000f)
                 val h = (hIn.text.toString().toFloatOrNull() ?: initH).coerceIn(30f, 2000f)
@@ -182,7 +182,7 @@ fun showWall(
 
     AlertDialog.Builder(ctx)
         .setTitle(title)
-        .setView(root)
+        .setView(scrollableDialogContent(ctx, root))
         .setPositiveButton("确定") { _, _ ->
             val w = ((wIn.text.toString().toFloatOrNull() ?: (initWmm / 1000f)) * 1000f)
                 .coerceIn(100f, 100000f)
