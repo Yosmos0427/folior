@@ -1376,20 +1376,50 @@ class EditorActivity : AppCompatActivity() {
     }
 
     /**
-     * 应用替换：只换图源（imgId），位置 / 尺寸 / 旋转 / 装裱 / 打印尺寸全部保持不动。
-     * 导入在后台线程完成，避免大图阻塞主线程。
+     * 应用替换：新图必须**完整呈现**——不为填框而裁切，保留摄影师原始取景。
+     *
+     * 做法：以"框的面积与中心保持不变"为锚点，按新图宽高比重算框的宽高，
+     * 使框比例与新图完全一致（此时渲染的 cover 缩放恰好等于完整铺满，不裁任何边），
+     * 并重置 cropZoom / cropCx / cropCy，避免旧图的取景缩放与中心延续到新图。
+     * 位置、旋转、装裱样式、打印尺寸均保持不变。
      */
     private fun applyReplacement(uri: Uri) {
         val target = selected() ?: return
         if (target.type != Item.TYPE_PHOTO) return
+
+        // 记录替换前的锚点：页物理尺寸、原框、中心点
+        val pageWmm = page().widthMm(project).coerceAtLeast(1f)
+        val pageHmm = page().heightMm(project).coerceAtLeast(1f)
+        val oldW = target.w
+        val oldH = target.h
+        val cx = target.x + oldW / 2f
+        val cy = target.y + oldH / 2f
+
         Thread {
             val imgId = Store.importImage(this, uri)
+            val meta = if (imgId != null) Store.photoMeta(this, imgId) else null
             runOnUiThread {
-                if (imgId == null) {
+                if (imgId == null || meta == null || meta.first <= 0 || meta.second <= 0) {
                     Toast.makeText(this, "照片读取失败，请重试", Toast.LENGTH_SHORT).show()
                     return@runOnUiThread
                 }
                 target.imgId = imgId
+                // 框比例 = 新图宽高比（渲染 cover 缩放此时恰好等于完整铺满）
+                val ratio = meta.first.toFloat() / meta.second.toFloat()
+                val areaMm2 = (oldW * pageWmm) * (oldH * pageHmm)
+                if (areaMm2 > 0f && ratio > 0f) {
+                    // 保持视觉体量：面积不变，按新图比例重算宽高
+                    val newWmm = Math.sqrt((areaMm2 * ratio).toDouble()).toFloat()
+                    val newHmm = newWmm / ratio
+                    target.w = newWmm / pageWmm
+                    target.h = newHmm / pageHmm
+                    target.x = cx - target.w / 2f
+                    target.y = cy - target.h / 2f
+                }
+                // 关键：清除旧图取景参数，新图从完整画面开始
+                target.cropZoom = 1f
+                target.cropCx = 0.5f
+                target.cropCy = 0.5f
                 canvas.invalidate()
                 strip.refresh()
                 scheduleSave()
