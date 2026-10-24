@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 主题图标（Android 13+ 单色）：三页并集 → 阶梯状「叠页」轮廓 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M31,41 L61,41 L61,81 L31,81 Z M38,34 L68,34 L68,74 L38,74 Z M45,27 L75,27 L75,67 L45,67 Z" />
+</vector>

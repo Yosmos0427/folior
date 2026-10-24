@@ -1,20 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  册页 Folior 图标前景：三张叠放的页面 =「散照成册」；封面上一道朱红书脊（装订）。
+  - 后两层用「墨色填充 + 纸白描边」的空心页：既能遮住下层描边的交叉，又让层次分明
+  - 顶页实心纸白，朱红书脊贴其左边缘
+  注：空心层的填充色与 background(@color/ink) 相同；若日后改背景色，请同步这两处。
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp"
     android:viewportWidth="108" android:viewportHeight="108">
-    <!-- 极简:一页纸 + 一条折线 -->
+
+    <!-- 最底一页 -->
     <path
-        android:strokeColor="#FAFAF7"
-        android:strokeWidth="3"
-        android:fillColor="#00000000"
-        android:pathData="M36,30 L72,30 L72,78 L36,78 Z" />
+        android:fillColor="#1A1A18"
+        android:pathData="M31,41 L61,41 L61,81 L31,81 Z" />
     <path
-        android:strokeColor="#FAFAF7"
+        android:strokeColor="#EEFAFAF7"
         android:strokeWidth="2.4"
-        android:strokeLineCap="round"
         android:fillColor="#00000000"
-        android:pathData="M42,64 C48,54 52,68 58,56 C62,48 66,58 66,58" />
+        android:pathData="M31,41 L61,41 L61,81 L31,81 Z" />
+
+    <!-- 中间一页 -->
+    <path
+        android:fillColor="#1A1A18"
+        android:pathData="M38,34 L68,34 L68,74 L38,74 Z" />
+    <path
+        android:strokeColor="#EEFAFAF7"
+        android:strokeWidth="2.4"
+        android:fillColor="#00000000"
+        android:pathData="M38,34 L68,34 L68,74 L38,74 Z" />
+
+    <!-- 顶页（封面）：纸白 -->
     <path
         android:fillColor="#FAFAF7"
-        android:pathData="M42,40 h14 v3 h-14 z" />
+        android:pathData="M45,27 L75,27 L75,67 L45,67 Z" />
+
+    <!-- 书脊：朱红 -->
+    <path
+        android:fillColor="#B5442A"
+        android:pathData="M45,27 L51,27 L51,67 L45,67 Z" />
 </vector>
