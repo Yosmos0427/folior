@@ -735,6 +735,12 @@ class PageCanvas @JvmOverloads constructor(
             MotionEvent.ACTION_DOWN -> {
                 if (selected != null && hitResizeHandle(ev.x, ev.y)) {
                     resizing = true
+                    val sel = selected!!
+                    resizeBaseW = sel.w
+                    resizeBaseH = sel.h
+                    // 照片只能按原图比例缩放（不裁切、不变形）；文字/色块/笔画仍自由缩放
+                    resizeLockAspect = sel.type == Item.TYPE_PHOTO &&
+                            sel.w > 0f && sel.h > 0f
                     lastTouch.set(ev.x, ev.y)
                     return true
                 }
@@ -773,8 +779,15 @@ class PageCanvas @JvmOverloads constructor(
                     // 以图像中心为锚点缩放：保持中心不动
                     val cx0 = multiInitialX + multiInitialW / 2f
                     val cy0 = multiInitialY + multiInitialH / 2f
-                    it.w = (multiInitialW * scale).coerceIn(0.02f, 4f)
-                    it.h = (multiInitialH * scale).coerceIn(0.02f, 4f)
+                    // 照片：两轴共用同一系数，钳制也按两轴共同边界，比例严格守恒
+                    var sc = scale
+                    if (it.type == Item.TYPE_PHOTO && multiInitialW > 0f && multiInitialH > 0f) {
+                        val lo = Math.max(0.02f / multiInitialW, 0.02f / multiInitialH)
+                        val hi = Math.min(4f / multiInitialW, 4f / multiInitialH)
+                        sc = scale.coerceIn(Math.min(lo, hi), Math.max(lo, hi))
+                    }
+                    it.w = (multiInitialW * sc).coerceIn(0.02f, 4f)
+                    it.h = (multiInitialH * sc).coerceIn(0.02f, 4f)
                     it.x = cx0 - it.w / 2f
                     it.y = cy0 - it.h / 2f
                     // 墙上的照片按实际尺寸等比缩放
@@ -941,6 +954,11 @@ class PageCanvas @JvmOverloads constructor(
         return null
     }
 
+    // 手柄缩放起点：照片锁定原比例缩放，其余元素保持自由缩放
+    private var resizeBaseW = 0f
+    private var resizeBaseH = 0f
+    private var resizeLockAspect = false
+
     /** 右下角手柄命中测试（含旋转）。 */
     private fun hitResizeHandle(vx: Float, vy: Float): Boolean {
         val it = selected ?: return false
@@ -956,8 +974,10 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     /**
-     * 拖拽右下角手柄调节大小：宽高【各自独立】随手指任意缩放（不锁比例），
-     * 文字、照片、色块、笔画统一行为；中心保持不动；
+     * 拖拽右下角手柄调节大小，中心保持不动：
+     * - **照片：只按原图比例等比缩放**（不裁切、不变形）——取手指在两轴上更大的缩放意愿，
+     *   对起始宽高等比乘同一个系数，比例天然守恒
+     * - 文字 / 色块 / 笔画：宽高各自独立，自由缩放
      * 墙上的照片实际宽度跟随宽度轴缩放。
      */
     private fun handleResizeMove(ev: MotionEvent) {
@@ -972,8 +992,22 @@ class PageCanvas @JvmOverloads constructor(
         val lx = abs(dx * cos(rad) - dy * sin(rad)).toFloat()
         val ly = abs(dx * sin(rad) + dy * cos(rad)).toFloat()
         val oldW = it.w
-        it.w = (lx * 2f / slot.rect.width()).coerceIn(0.02f, 8f)
-        it.h = (ly * 2f / slot.rect.height()).coerceIn(0.02f, 8f)
+
+        if (resizeLockAspect && resizeBaseW > 0f && resizeBaseH > 0f) {
+            // 照片：以起始尺寸等比缩放，比例严格保持
+            val wantW = lx * 2f / slot.rect.width()
+            val wantH = ly * 2f / slot.rect.height()
+            val wantScale = Math.max(wantW / resizeBaseW, wantH / resizeBaseH)
+            val minScale = 0.02f / Math.min(resizeBaseW, resizeBaseH)
+            val maxScale = 8f / Math.max(resizeBaseW, resizeBaseH)
+            val sc = wantScale.coerceAtLeast(minScale).coerceAtMost(
+                if (maxScale > minScale) maxScale else minScale)
+            it.w = resizeBaseW * sc
+            it.h = resizeBaseH * sc
+        } else {
+            it.w = (lx * 2f / slot.rect.width()).coerceIn(0.02f, 8f)
+            it.h = (ly * 2f / slot.rect.height()).coerceIn(0.02f, 8f)
+        }
         // 墙上照片：实际打印宽度跟随宽度轴
         if (it.printMm != null && oldW > 0f)
             it.printMm = it.printMm!! * (it.w / oldW)
