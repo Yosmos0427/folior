@@ -850,7 +850,8 @@ class EditorActivity : AppCompatActivity() {
         project.pages.removeAt(pos)
         pageIndex = pageIndex.coerceIn(0, project.pages.size - 1)
         canvas.select(null)
-        refreshAll()
+        // 删除后预览条保持原位、后续页往前补，不做滚动跳转
+        refreshAll(scrollStrip = false)
         scheduleSave()
     }
 
@@ -1012,9 +1013,10 @@ class EditorActivity : AppCompatActivity() {
     private fun pageOfItem(item: Item): Page? =
         project.pages.firstOrNull { pg -> pg.items.any { it === item } }
 
-    private fun refreshAll() {
+    private fun refreshAll(scrollStrip: Boolean = true) {
         strip.setCurrent(pageIndex)
         strip.refresh()
+        if (scrollStrip) strip.scrollToCurrent()
         syncSpread()
         canvas.invalidateLayout()
         updateBars()

@@ -213,11 +213,19 @@ class PageStrip @JvmOverloads constructor(
         }
     }
 
+    /** 刷新缩略图（不改变滚动位置） */
     fun refresh() {
         computeAvail()
         thumbCache.clear()
         stripAdapter.notifyDataSetChanged()
-        post { rv.scrollToPosition(currentIndex.coerceIn(0, (project?.pages?.size ?: 1) - 1)) }
+    }
+
+    /** 把预览条滚动到当前页（切页 / 新增页时显式调用；删除页时不调用，保持原位不跳动） */
+    fun scrollToCurrent() {
+        post {
+            val n = project?.pages?.size ?: 0
+            if (n > 0) rv.scrollToPosition(currentIndex.coerceIn(0, n - 1))
+        }
     }
 
     fun setCurrent(idx: Int) {
