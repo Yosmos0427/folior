@@ -20,7 +20,7 @@ import com.yussy.folior.model.parseColor
  *   ── 背景衬材 ──
  *   材质：无 / 纸张 / 木板 / 金属 / 亚克力
  *   颜色：[色块按钮]
- *   横向外沿：▬▬▬ 12%   纵向外沿：▬▬▬ 12%
+ *   外沿：▬▬▬ 12% ∨        （点 ∨ 展开 → 横向外沿 / 纵向外沿 两条独立滑块）
  *   比例：跟随 / 1:1 / 4:3 / 3:2 / 16:9
  *   ── 边框 ──
  *   材质：无 / 木板 / 金属 / 亚克力
@@ -34,6 +34,8 @@ class FramingPanel(context: Context) : LinearLayout(context) {
 
     private var item: Item? = null
     private var density = resources.displayMetrics.density
+    /** 外沿细分（横向 / 纵向）是否展开 */
+    private var padExpanded = false
 
     fun bind(target: Item) {
         item = target
@@ -232,10 +234,36 @@ class FramingPanel(context: Context) : LinearLayout(context) {
         matColorRow.addView(rowLabel("颜色"))
         matColorRow.addView(colorButton("衬材颜色", { it.matColor }) { hex -> it.matColor = hex })
         root.addView(matColorRow)
-        root.addView(sliderRow("横向外沿", (it.matPadX * 100).toInt().coerceIn(0, 40), 40,
-            labelWidthDp = 62f) { p -> it.matPadX = p / 100f })
-        root.addView(sliderRow("纵向外沿", (it.matPadY * 100).toInt().coerceIn(0, 40), 40,
-            labelWidthDp = 62f) { p -> it.matPadY = p / 100f })
+        // 外沿：默认整体调节（同时设置横向与纵向）；点尾部 ∨ 展开为两条方向滑块
+        val padRow = sliderRow("外沿", (it.matPadX * 100).toInt().coerceIn(0, 40), 40) { p ->
+            it.matPadX = p / 100f
+            it.matPadY = p / 100f
+        }
+        padRow.addView(TextView(context).apply {
+            text = if (padExpanded) "∧" else "∨"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF8A8A84.toInt())
+            setPadding(px(8f), px(6f), px(2f), px(6f))
+            contentDescription = if (padExpanded) "收起方向外沿" else "展开方向外沿"
+            setOnClickListener {
+                val target = item ?: return@setOnClickListener
+                padExpanded = !padExpanded
+                if (padExpanded && target.matRatio > 0.01f) {
+                    // 方向外沿需要自由宽高，否则「比例」扩展会把差异吸收掉
+                    target.matRatio = 0f
+                }
+                onChanged?.invoke()
+                rebuild()
+            }
+        })
+        root.addView(padRow)
+        if (padExpanded) {
+            root.addView(sliderRow("横向外沿", (it.matPadX * 100).toInt().coerceIn(0, 40), 40,
+                labelWidthDp = 62f) { p -> it.matPadX = p / 100f })
+            root.addView(sliderRow("纵向外沿", (it.matPadY * 100).toInt().coerceIn(0, 40), 40,
+                labelWidthDp = 62f) { p -> it.matPadY = p / 100f })
+        }
 
         val ratioRow = row()
         ratioRow.addView(rowLabel("比例"))
