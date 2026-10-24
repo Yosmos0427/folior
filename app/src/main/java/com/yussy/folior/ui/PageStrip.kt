@@ -51,6 +51,9 @@ class PageStrip @JvmOverloads constructor(
     /** 工作区拖照片悬停的目标格（高亮），-1 = 无 */
     private var dragTargetPos = -1
 
+    /** 正在被长按拖动的页 id（拖动期间触摸逻辑完全让位，避免打断拖动） */
+    private var draggingPageId: String? = null
+
     // 缩略图缓存：访问序 LRU，上限 40 条（页面很多时不再无界增长）
     private val thumbCache = object : LinkedHashMap<String, android.graphics.Bitmap>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, android.graphics.Bitmap>) =
@@ -128,9 +131,17 @@ class PageStrip @JvmOverloads constructor(
                 if (actionState == ItemTouchHelper.ACTION_STATE_DRAG && vh != null) {
                     vh.itemView.alpha = 0.55f
                     vh.itemView.scaleX = 1.04f; vh.itemView.scaleY = 1.04f
-                    if (revealedPageId != null) {
-                        revealedPageId = null
-                        stripAdapter.notifyDataSetChanged()
+                    // 注意：这里绝不能 notifyDataSetChanged —— 拖动刚启动时重排会让
+                    // ItemTouchHelper 立刻丢失拖动态（表现为"震动一下就放回"）。
+                    // 只清状态并就地复位该项视觉，界面在拖动结束的 clearView 里统一刷新。
+                    revealedPageId = null
+                    draggingPageId = (vh as? StripVH)?.let {
+                        project?.pages?.getOrNull(it.bindingAdapterPosition)?.id
+                    }
+                    (vh as? StripVH)?.let {
+                        it.content.translationX = 0f
+                        it.content.translationY = 0f
+                        it.deleteBtn.visibility = View.INVISIBLE
                     }
                 }
             }
@@ -139,7 +150,9 @@ class PageStrip @JvmOverloads constructor(
                 super.clearView(r, vh)
                 vh.itemView.alpha = 1f
                 vh.itemView.scaleX = 1f; vh.itemView.scaleY = 1f
+                draggingPageId = null
                 onPageReordered?.invoke(currentIndex)
+                stripAdapter.notifyDataSetChanged()
             }
         })
         ith.attachToRecyclerView(rv)
@@ -156,6 +169,7 @@ class PageStrip @JvmOverloads constructor(
             false)
         rv.recycledViewPool.clear()
         revealedPageId = null
+        draggingPageId = null
         dragTargetPos = -1
         applyMode()
         refresh()
@@ -371,6 +385,8 @@ class PageStrip @JvmOverloads constructor(
         private var downY = 0f
         private var moved = false
         private var axisLocked = false
+        /** 本次手势是否已把删除按钮固定 */
+        private var revealCommitted = false
 
         init {
             val d = resources.displayMetrics.density
@@ -404,15 +420,19 @@ class PageStrip @JvmOverloads constructor(
                 if (pos == RecyclerView.NO_POSITION) return@setOnTouchListener false
                 val page = project?.pages?.getOrNull(pos)
                     ?: return@setOnTouchListener false
-                val revealed = revealedPageId == page.id
+                // 该页正在被长按拖动：不参与滑出删除逻辑，事件交给 ItemTouchHelper
+                if (draggingPageId != null && draggingPageId == page.id) {
+                    return@setOnTouchListener false
+                }
                 val reveal = revealPx()
-                val slop = 3f * d
-                // 呼出/收起的判定距离：轻轻一滑（10dp）即固定，不用滑到顶
-                val commit = 10f * d
+                val slop = 4f * d
+                // 滑出判定距离：轻轻一滑（8dp）即固定，无需滑到顶
+                val commit = 8f * d
 
                 when (ev.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         downX = ev.x; downY = ev.y; moved = false; axisLocked = false
+                        revealCommitted = revealedPageId == page.id
                         true
                     }
                     MotionEvent.ACTION_MOVE -> {
@@ -421,10 +441,12 @@ class PageStrip @JvmOverloads constructor(
                         // 滑动轴：横向栏=纵向滑动；纵向栏=横向滑动
                         val axisD = if (verticalMode) dx else dy
                         val otherD = if (verticalMode) dy else dx
+                        // 呼出方向为正：竖屏上滑（dy<0）、横屏右滑（dx>0）
+                        val towardShow = if (verticalMode) axisD else -axisD
                         if (!axisLocked && Math.abs(axisD) > slop) {
                             axisLocked = true
-                            if (Math.abs(axisD) > Math.abs(otherD) * 1.2f) {
-                                // 删除滑动轴主导：本手势内不再交给 RecyclerView 滚动
+                            if (towardShow > 0 && Math.abs(axisD) > Math.abs(otherD) * 1.1f) {
+                                // 呼出轴主导：本手势内不交给 RecyclerView 滚动/长按拖动
                                 rv.requestDisallowInterceptTouchEvent(true)
                             }
                         }
@@ -434,35 +456,42 @@ class PageStrip @JvmOverloads constructor(
                                     else axisD.coerceIn(-reveal, 0f))
                             if (verticalMode) content.translationX = t
                             else content.translationY = t
+
+                            // 滑出即固定：一旦越过判定距离立刻锁定（不等松手，避免回弹误取消）
+                            if (!revealCommitted && towardShow > commit) {
+                                revealCommitted = true
+                                revealedPageId = page.id
+                                deleteBtn.visibility = View.VISIBLE
+                            }
                         }
                         true
                     }
                     MotionEvent.ACTION_CANCEL -> {
-                        // 被父级拦截（滚动）时也按已滑距离判定，避免呼出状态闪断
-                        val delta = if (verticalMode) ev.x - downX else ev.y - downY
-                        val towardShow = if (verticalMode) delta else -delta
-                        if (towardShow > commit) setRevealed(page.id)
-                        else stripAdapter.notifyDataSetChanged()
+                        // 被父级接管（滚动）：按是否已固定决定去留
+                        if (!revealCommitted) {
+                            revealCommitted = revealedPageId == page.id
+                            if (!revealCommitted) stripAdapter.notifyDataSetChanged()
+                        }
                         true
                     }
                     MotionEvent.ACTION_UP -> {
                         val delta = if (verticalMode) ev.x - downX else ev.y - downY
-                        // 呼出方向为正：竖屏上滑（dy<0）、横屏右滑（dx>0）
-                        val towardShow = if (verticalMode) delta else -delta
+                        // 反向位移：竖屏下滑（dy>0）、横屏左滑（dx<0）
+                        val back = if (verticalMode) -delta else delta
                         when {
                             !moved -> {
                                 // 轻点：已固定的收起，否则选中该页
-                                if (revealed) setRevealed(null) else selectFromStrip(pos)
+                                if (revealCommitted) setRevealed(null) else selectFromStrip(pos)
                             }
-                            towardShow > commit && !revealed -> {
-                                // 轻轻滑出即固定，等用户点删除 / 下滑取消
-                                setRevealed(page.id)
-                            }
-                            towardShow < -commit && revealed -> {
-                                // 反向滑回 = 取消固定
+                            revealCommitted && back > reveal * 0.45f -> {
+                                // 明显反向滑回 = 取消固定
                                 setRevealed(null)
                             }
-                            else -> stripAdapter.notifyDataSetChanged()
+                            else -> {
+                                // 保持当前状态（已固定的继续固定）
+                                if (revealCommitted) revealedPageId = page.id
+                                stripAdapter.notifyDataSetChanged()
+                            }
                         }
                         true
                     }
