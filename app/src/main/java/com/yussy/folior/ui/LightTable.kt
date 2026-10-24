@@ -38,9 +38,13 @@ class LightTable @JvmOverloads constructor(
 
     var project: Project? = null
         set(value) {
+            val sameProject = field != null && value != null && field?.id == value.id
             field = value
-            thumbCache.clear()
-            resetRenderQueue()
+            if (!sameProject) {
+                // 只在切换项目时清缓存：同一项目收回再展开直接命中，不再重渲染
+                thumbCache.clear()
+                resetRenderQueue()
+            }
             tableAdapter.notifyDataSetChanged()
         }
 
@@ -77,7 +81,7 @@ class LightTable @JvmOverloads constructor(
 
     // 缩略图缓存：访问序 LRU 60 条（看片台一屏可达 40 张）
     private val thumbCache = object : LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>) = size > 60
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>) = size > 80
     }
 
     // 分帧渲染队列：避免一次性画几十张缩略图卡住展开动画
@@ -91,7 +95,7 @@ class LightTable @JvmOverloads constructor(
         override fun run() {
             try {
                 var n = 0
-                while (renderQueue.isNotEmpty() && n < 2) {
+                while (renderQueue.isNotEmpty() && n < 3) {
                     val t = renderQueue.removeFirst()
                     n++
                     // 身份校验：ImageView 已被复用给其他页 → 丢弃该任务（否则图会错位/覆盖）
@@ -136,6 +140,10 @@ class LightTable @JvmOverloads constructor(
         setBackgroundColor(0xFFF4F4EE.toInt())
         clipToPadding = false
         overScrollMode = View.OVER_SCROLL_NEVER
+        // 格子尺寸由 layoutCells 统一指定，RecyclerView 自身尺寸不随内容变化
+        setHasFixedSize(true)
+        // 预缓存更多离屏 holder，滚动时减少重绑定
+        setItemViewCacheSize(12)
         val d = resources.displayMetrics.density
         gap = (7 * d).toInt()
         labelH = (18 * d).toInt()
@@ -239,6 +247,67 @@ class LightTable @JvmOverloads constructor(
             resetRenderQueue()
             tableAdapter.notifyDataSetChanged()
         }
+    }
+
+    private var preloadThread: Thread? = null
+    private var preloadedProjectId: String? = null
+
+    /** 估算展开后的格子尺寸（未展开时也能算，供后台预渲染使用） */
+    fun estimateCellSize(): Pair<Int, Int> {
+        val dm = resources.displayMetrics
+        val d = dm.density
+        val availW = dm.widthPixels - paddingLeft - paddingRight
+        if (availW <= 0) return 0 to 0
+        val cols = (availW / (80f * d)).toInt().coerceIn(3, 11)
+        val cellW = (availW / cols) - gap
+        val imgH = (cellW / baseAspect.coerceIn(0.55f, 1.9f)).toInt()
+        return cellW to imgH
+    }
+
+    /**
+     * 项目打开后在后台逐页预渲染缩略图（每个项目只跑一次）。
+     * 渲染结果 post 回主线程再写入 LRU——解码在后台（Store 已加锁），缓存只在主线程改。
+     */
+    fun preloadInBackground(p: Project, aspect: Float) {
+        if (preloadedProjectId == p.id) return
+        preloadedProjectId = p.id
+        baseAspect = aspect
+        val (w, h) = estimateCellSize()
+        if (w <= 0 || h <= 0) return
+        val pages = p.pages.toList()
+        if (pages.isEmpty()) return
+        preloadThread?.interrupt()
+        preloadThread = Thread {
+            for (page in pages) {
+                if (Thread.currentThread().isInterrupted) return@Thread
+                val key = "${page.id}_${w}x$h"
+                val bmp = try {
+                    PageRenderer.renderThumb(context, p, page, w, h)
+                } catch (_: Throwable) {
+                    null
+                } ?: continue
+                renderHandler.post {
+                    if (thumbCache[key] == null) thumbCache[key] = bmp
+                }
+                // 让出 CPU：预加载不抢界面渲染的时间片
+                try {
+                    Thread.sleep(16)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
+            }
+        }.apply {
+            isDaemon = true
+            name = "lighttable-preload"
+            start()
+        }
+    }
+
+    /** 停止后台预加载（界面销毁时调用） */
+    fun stopPreload() {
+        preloadThread?.interrupt()
+        preloadThread = null
+        preloadedProjectId = null
     }
 
     /** 展开后定位到当前页所在行 */

@@ -219,6 +219,7 @@ object Store {
         } catch (_: Exception) {}
     }
 
+    @Synchronized
     fun putPhotoMeta(c: Context, imgId: String, origW: Int, origH: Int, ppi: Float) {
         val m = loadMeta(c)
         m[imgId] = org.json.JSONObject()
@@ -260,6 +261,7 @@ object Store {
     fun decodeThumb(c: Context, imgId: String, maxDim: Int = 320): Bitmap? =
         decodeCached(c, imgId, maxDim, prefix = "t")
 
+    @Synchronized
     private fun decodeCached(c: Context, imgId: String, maxDim: Int, prefix: String = ""): Bitmap? {
         val key = "$prefix$imgId@$maxDim"
         memCache.get(key)?.let { return it }

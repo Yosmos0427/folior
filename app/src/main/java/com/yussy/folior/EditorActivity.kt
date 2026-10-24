@@ -482,6 +482,14 @@ class EditorActivity : AppCompatActivity() {
 
         applyOrientation()
         refreshAll()
+        // 项目打开 1.2s 后在后台预渲染看片台缩略图：不抢启动与首屏渲染，
+        // 之后展开看片台基本全部命中缓存，收回再打开也不会重渲染
+        handler.postDelayed({
+            if (!isFinishing && !isDestroyed) {
+                lightTable.preloadInBackground(
+                    project, project.pageWmm / project.pageHmm.coerceAtLeast(1f))
+            }
+        }, 1200)
     }
 
     // ---------------- 跨页 / 横竖屏 ----------------
@@ -1156,6 +1164,11 @@ class EditorActivity : AppCompatActivity() {
         Store.save(this, project)
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        lightTable.stopPreload()
+    }
+
     // ---------- 菜单 ----------
 
     private fun showMenu() {
@@ -1260,11 +1273,29 @@ class EditorActivity : AppCompatActivity() {
             .create()
         progress.show()
         Thread {
-            val imgIds = ArrayList<String>()
+            // 并行导入：解码 + JPEG 压缩是 CPU 密集型，多线程可显著缩短总耗时
+            // （单线程 20 张约 15–20s → 3 线程约 5–7s）。
+            // 结果按下标回填，保持用户选择的原始顺序。
+            val slots = arrayOfNulls<String>(total)
+            val done = java.util.concurrent.atomic.AtomicInteger(0)
+            val workers = Runtime.getRuntime().availableProcessors().coerceIn(2, 3)
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(workers)
+            val latch = java.util.concurrent.CountDownLatch(total)
             uris.forEachIndexed { i, uri ->
-                Store.importImage(this, uri)?.let { imgIds.add(it) }
-                runOnUiThread { progress.setMessage("${i + 1} / $total") }
+                pool.execute {
+                    try {
+                        slots[i] = Store.importImage(this, uri)
+                    } catch (_: Throwable) {
+                    } finally {
+                        val d = done.incrementAndGet()
+                        runOnUiThread { progress.setMessage("$d / $total") }
+                        latch.countDown()
+                    }
+                }
             }
+            latch.await()
+            pool.shutdown()
+            val imgIds = slots.filterNotNull()
             runOnUiThread {
                 progress.dismiss()
                 if (imgIds.isEmpty()) {
