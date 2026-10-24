@@ -45,6 +45,8 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var topBar: View
     private lateinit var lightTableHost: android.widget.FrameLayout
     private lateinit var lightTable: LightTable
+    private lateinit var ltHeader: LinearLayout
+    private lateinit var ltInfo: TextView
     private lateinit var expandBtn: TextView
     private var lightTableOpen = false
     private var pageIndex = 0
@@ -328,13 +330,13 @@ class EditorActivity : AppCompatActivity() {
         tools = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(8f), dp(4f), dp(8f), dp(4f))
+            setPadding(dp(6f), dp(4f), dp(6f), dp(4f))
         }
         fun toolBtn(text: String, action: () -> Unit) = TextView(this).apply {
             this.text = text
             textSize = 13f
             setTextColor(0xFF1A1A18.toInt())
-            setPadding(dp(16f), dp(10f), dp(16f), dp(10f))
+            setPadding(dp(8f), dp(10f), dp(8f), dp(10f))
             setOnClickListener { action() }
             tools.addView(this)
         }
@@ -346,6 +348,16 @@ class EditorActivity : AppCompatActivity() {
         toolBtn("放映") { startActivity(Intent(this, ViewerActivity::class.java)
             .putExtra("id", project.id)
             .putExtra("page", pageIndex)) }
+        // 「展开看片台」并入工具条，位于「放映」右侧；展开后此按钮迁移到看片台顶栏并变为「收回」
+        expandBtn = TextView(this).apply {
+            text = "展开"
+            textSize = 13f
+            setTextColor(0xFFB5442A.toInt())
+            setPadding(dp(8f), dp(10f), dp(8f), dp(10f))
+            contentDescription = "展开看片台"
+            setOnClickListener { if (lightTableOpen) closeLightTable() else openLightTable() }
+        }
+        tools.addView(expandBtn)
         root.addView(tools)
 
         // ---- 页面条（竖屏在底部，横屏移到左侧）----
@@ -364,31 +376,33 @@ class EditorActivity : AppCompatActivity() {
             visibility = View.GONE
             setBackgroundColor(0xFFF4F4EE.toInt())
         }
+        // 看片台顶栏：左侧页数信息，右侧「收回」按钮（展开时从工具条迁移过来）
+        ltHeader = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(14f), 0, dp(6f), 0)
+        }
+        ltInfo = TextView(this).apply {
+            textSize = 11.5f
+            setTextColor(0xFF8A8A84.toInt())
+        }
+        ltHeader.addView(ltInfo, LinearLayout.LayoutParams(
+            0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        lightTableHost.addView(ltHeader, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, dp(44f)))
+        lightTableHost.addView(View(this).apply { setBackgroundColor(0xFFE6E6E0.toInt()) },
+            android.widget.FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp(0.7f))).apply {
+                topMargin = dp(44f)
+            })
+
         lightTable = LightTable(this)
         lightTableHost.addView(lightTable, android.widget.FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT).apply {
+            topMargin = dp(44f)
+        })
         frame.addView(lightTableHost, android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-
-        // ---- 「展开 / 收回」按钮 ----
-        // 未展开：悬浮在预览栏右侧边缘上方（竖屏=底部预览栏右上；横屏=左侧预览栏右上）
-        // 已展开：移到看片台右上角，作为抽屉拉手
-        expandBtn = TextView(this).apply {
-            text = "展开"
-            textSize = 11.5f
-            setTextColor(0xFF1A1A18.toInt())
-            gravity = Gravity.CENTER
-            setPadding(dp(8f), 0, dp(8f), 0)
-            background = GradientDrawable().apply {
-                setColor(0xF2FAFAF7.toInt())
-                setStroke(Math.max(1, dp(1f)), 0x1F000000)
-                cornerRadius = dp(20f).toFloat()
-            }
-            elevation = dp(3f).toFloat()
-            contentDescription = "展开看片台"
-            setOnClickListener { if (lightTableOpen) closeLightTable() else openLightTable() }
-        }
-        frame.addView(expandBtn, android.widget.FrameLayout.LayoutParams(dp(60f), dp(40f)))
 
         setContentView(frame)
 
@@ -446,8 +460,6 @@ class EditorActivity : AppCompatActivity() {
 
         applyOrientation()
         refreshAll()
-        // 顶栏此刻尚未完成测量：布局结束后按真实顶栏高度重算按钮位置
-        rootFrame.post { applyExpandBtnState() }
     }
 
     // ---------------- 跨页 / 横竖屏 ----------------
@@ -559,7 +571,8 @@ class EditorActivity : AppCompatActivity() {
         lightTableHost.visibility = View.VISIBLE
         lightTableHost.translationY = Math.max(1, rootFrame.height - topBar.height).toFloat()
         lightTable.post { lightTable.layoutCells() }
-        applyExpandBtnState(animate = true)
+        ltInfo.text = "共 ${project.pages.size} 页"
+        applyExpandBtnState()
         lightTableHost.animate().translationY(0f)
             .setDuration(300)
             .setInterpolator(android.view.animation.DecelerateInterpolator())
@@ -584,46 +597,47 @@ class EditorActivity : AppCompatActivity() {
             }.start()
         tools.animate().translationY(0f).setDuration(240)
             .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
-        applyExpandBtnState(animate = true)
+        applyExpandBtnState()
     }
 
     /**
-     * 「展开 / 收回」按钮的位置与文案：
-     * - 未展开：竖屏=底部预览栏右上、横屏=左侧预览栏右边缘上方
-     * - 已展开：看片台右上角（抽屉拉手）
+     * 「展开 / 收回」按钮：
+     * - 收起态：留在底部工具条内（「放映」右侧），与其它工具钮同样式，朱红文字区分
+     * - 展开态：迁移到看片台顶栏右侧，变为浅朱红胶囊的「收回」
      */
-    private fun applyExpandBtnState(animate: Boolean = false) {
-        val place = {
-            val lp = expandBtn.layoutParams as android.widget.FrameLayout.LayoutParams
+    private fun applyExpandBtnState() {
+        val target: ViewGroup = if (lightTableOpen) ltHeader else tools
+        if (expandBtn.parent !== target) {
+            (expandBtn.parent as? ViewGroup)?.removeView(expandBtn)
             if (lightTableOpen) {
-                lp.gravity = Gravity.TOP or Gravity.END
-                lp.topMargin = topBar.height + dp(8f)
-                lp.rightMargin = dp(10f)
-                lp.leftMargin = 0
-                lp.bottomMargin = 0
-            } else if (isLandscape()) {
-                lp.gravity = Gravity.TOP or Gravity.START
-                lp.topMargin = topBar.height + dp(6f)
-                lp.leftMargin = dp(88f) + dp(4f)    // 紧贴纵向预览栏右边缘
-                lp.rightMargin = 0
-                lp.bottomMargin = 0
+                target.addView(expandBtn, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, dp(32f)).apply {
+                    rightMargin = dp(4f)
+                })
             } else {
-                lp.gravity = Gravity.BOTTOM or Gravity.END
-                lp.bottomMargin = dp(96f) + dp(8f)  // 底部预览栏（96dp）上方右端
-                lp.rightMargin = dp(10f)
-                lp.topMargin = 0
-                lp.leftMargin = 0
+                target.addView(expandBtn)   // 追加到末尾 = 「放映」右侧
             }
-            expandBtn.layoutParams = lp
-            expandBtn.text = if (lightTableOpen) "收回" else "展开"
-            expandBtn.contentDescription =
-                if (lightTableOpen) "收回看片台" else "展开看片台"
         }
-        if (!animate) { place(); return }
-        expandBtn.animate().alpha(0f).setDuration(90).withEndAction {
-            place()
-            expandBtn.animate().alpha(1f).setDuration(120).start()
-        }.start()
+        expandBtn.setTextColor(0xFFB5442A.toInt())
+        if (lightTableOpen) {
+            expandBtn.text = "收回"
+            expandBtn.textSize = 12f
+            expandBtn.gravity = Gravity.CENTER
+            expandBtn.setPadding(dp(12f), 0, dp(12f), 0)
+            expandBtn.background = GradientDrawable().apply {
+                setColor(0x14B5442A)
+                setStroke(Math.max(1, dp(1f)), 0x33B5442A)
+                cornerRadius = dp(16f).toFloat()
+            }
+            expandBtn.contentDescription = "收回看片台"
+        } else {
+            expandBtn.text = "展开"
+            expandBtn.textSize = 13f
+            expandBtn.gravity = Gravity.CENTER
+            expandBtn.setPadding(dp(8f), dp(10f), dp(8f), dp(10f))
+            expandBtn.background = null
+            expandBtn.contentDescription = "展开看片台"
+        }
     }
 
     @Suppress("DEPRECATION")

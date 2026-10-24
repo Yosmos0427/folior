@@ -40,6 +40,7 @@ class LightTable @JvmOverloads constructor(
         set(value) {
             field = value
             thumbCache.clear()
+            resetRenderQueue()
             tableAdapter.notifyDataSetChanged()
         }
 
@@ -88,19 +89,47 @@ class LightTable @JvmOverloads constructor(
     private var renderRunning = false
     private val renderDrain = object : Runnable {
         override fun run() {
-            var n = 0
-            while (renderQueue.isNotEmpty() && n < 2) {
-                val t = renderQueue.removeFirst()
-                n++
-                if (t.iv.isAttachedToWindow && thumbCache[t.key] == null) {
-                    val bmp = PageRenderer.renderThumb(context, project ?: continue, t.page, t.w, t.h)
-                    thumbCache[t.key] = bmp
-                    t.iv.setImageBitmap(bmp)
+            try {
+                var n = 0
+                while (renderQueue.isNotEmpty() && n < 2) {
+                    val t = renderQueue.removeFirst()
+                    n++
+                    // 身份校验：ImageView 已被复用给其他页 → 丢弃该任务（否则图会错位/覆盖）
+                    if (t.iv.tag != t.page.id) continue
+                    val hit = thumbCache[t.key]
+                    if (hit != null) {
+                        t.iv.setImageBitmap(hit)
+                        continue
+                    }
+                    val p = project ?: continue
+                    val bmp = try {
+                        PageRenderer.renderThumb(context, p, t.page, t.w, t.h)
+                    } catch (e: Throwable) {
+                        null   // 单张失败（OOM 等）不能拖垮整个队列
+                    }
+                    if (bmp != null) {
+                        thumbCache[t.key] = bmp
+                        // 渲染期间可能已被复用：再校验一次
+                        if (t.iv.tag == t.page.id) t.iv.setImageBitmap(bmp)
+                    }
                 }
+                if (renderQueue.isNotEmpty()) {
+                    renderHandler.postDelayed(this, 16)
+                } else {
+                    renderRunning = false
+                }
+            } catch (e: Throwable) {
+                // 兜底自愈：任何意外都复位状态，避免"渲染永久停摆"（缩略图不再加载）
+                resetRenderQueue()
             }
-            if (renderQueue.isNotEmpty()) renderHandler.postDelayed(this, 16)
-            else renderRunning = false
         }
+    }
+
+    /** 清空渲染队列并复位运行标志（project 切换 / 重算格子 / 主动刷新时调用） */
+    private fun resetRenderQueue() {
+        renderHandler.removeCallbacks(renderDrain)
+        renderQueue.clear()
+        renderRunning = false
     }
 
     init {
@@ -207,6 +236,7 @@ class LightTable @JvmOverloads constructor(
             imgH = newImgH
             (layoutManager as? GridLayoutManager)?.spanCount = cols
             thumbCache.clear()
+            resetRenderQueue()
             tableAdapter.notifyDataSetChanged()
         }
     }
@@ -223,6 +253,7 @@ class LightTable @JvmOverloads constructor(
 
     fun refresh() {
         thumbCache.clear()
+        resetRenderQueue()
         tableAdapter.notifyDataSetChanged()
     }
 
@@ -281,12 +312,16 @@ class LightTable @JvmOverloads constructor(
                 ViewGroup.LayoutParams.MATCH_PARENT, imgH,
                 Gravity.TOP or Gravity.CENTER_HORIZONTAL)
 
+            // tag 用于渲染队列的身份校验：View 复用时随之改变，旧任务自动失效
+            holder.thumb.tag = page.id
             val key = "${page.id}_${cellW}x${imgH}"
             val cached = thumbCache[key]
             if (cached != null) {
                 holder.thumb.setImageBitmap(cached)
             } else {
                 holder.thumb.setImageBitmap(null)
+                // 注意：不在此清空队列 —— 清空会丢掉尚未渲染的任务且不重绑定，
+                // 造成"永久空白"。失效任务在 drain 里被 tag 校验瞬时丢弃，不会积压。
                 renderQueue.addLast(RenderTask(page, key, cellW, imgH, holder.thumb))
                 if (!renderRunning) {
                     renderRunning = true
