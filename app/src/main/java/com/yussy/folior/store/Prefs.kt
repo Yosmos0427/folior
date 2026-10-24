@@ -3,58 +3,69 @@ package com.yussy.folior.store
 import android.content.Context
 
 /**
- * 全局设置（跨项目共享）：目前是 PDF 导出档位。
+ * 全局设置（跨项目共享）：PDF 导出精度与体积上限。
+ * 两项设置相互独立：
+ *  - 精度：决定渲染分辨率（轻量 72 / 标准 192 / 精细 300 / 自定义）
+ *  - 体积上限：导出后的目标体积（默认无上限）
  * SharedPreferences 存储，改动即时生效，无需保存按钮。
  */
 object Prefs {
 
-    const val PDF_SMALL = "small"
-    const val PDF_STANDARD = "standard"
-    const val PDF_FULL = "full"
-    const val PDF_CUSTOM = "custom"
+    /** 精度档位标识 */
+    const val DPI_LIGHT = 72
+    const val DPI_STANDARD = 192
+    const val DPI_FINE = 300
+    const val MODE_CUSTOM = "custom"
 
     private const val NAME = "folior_settings"
-    private const val K_PDF_MODE = "pdf_size_mode"
-    private const val K_PDF_CUSTOM_MB = "pdf_custom_mb"
+    private const val K_DPI_MODE = "pdf_dpi_mode_v2"
+    private const val K_DPI_CUSTOM = "pdf_dpi_custom"
+    private const val K_LIMIT_MB = "pdf_limit_mb"
 
     private fun sp(c: Context) = c.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
-    fun pdfSizeMode(c: Context): String =
-        sp(c).getString(K_PDF_MODE, PDF_STANDARD) ?: PDF_STANDARD
+    // ---------------- 精度 ----------------
 
-    fun setPdfSizeMode(c: Context, mode: String) {
-        sp(c).edit().putString(K_PDF_MODE, mode).apply()
+    /** 当前精度档：返回 "72" / "192" / "300" / "custom" */
+    fun pdfDpiMode(c: Context): String =
+        sp(c).getString(K_DPI_MODE, DPI_STANDARD.toString()) ?: DPI_STANDARD.toString()
+
+    fun setPdfDpiMode(c: Context, mode: String) {
+        sp(c).edit().putString(K_DPI_MODE, mode).apply()
     }
 
-    fun pdfCustomMb(c: Context): Int = sp(c).getInt(K_PDF_CUSTOM_MB, 50).coerceIn(1, 2000)
+    fun pdfCustomDpi(c: Context): Int = sp(c).getInt(K_DPI_CUSTOM, 240).coerceIn(72, 600)
 
-    fun setPdfCustomMb(c: Context, mb: Int) {
-        sp(c).edit().putInt(K_PDF_CUSTOM_MB, mb.coerceIn(1, 2000)).apply()
+    fun setPdfCustomDpi(c: Context, dpi: Int) {
+        sp(c).edit().putInt(K_DPI_CUSTOM, dpi.coerceIn(72, 600)).apply()
     }
 
-    /** 各档位的起始渲染精度（dpi）；超限时会自动逐级下调 */
-    fun pdfDpi(c: Context): Int = when (pdfSizeMode(c)) {
-        PDF_SMALL -> 150
-        PDF_STANDARD -> 225
-        PDF_FULL -> 300
-        PDF_CUSTOM -> 300
-        else -> 225
+    /** 实际导出精度 */
+    fun pdfDpi(c: Context): Int = when (pdfDpiMode(c)) {
+        DPI_LIGHT.toString() -> DPI_LIGHT
+        DPI_FINE.toString() -> DPI_FINE
+        MODE_CUSTOM -> pdfCustomDpi(c)
+        else -> DPI_STANDARD
     }
 
-    /** 硬性体积上限（MB）；0 表示不限制 */
-    fun pdfLimitMb(c: Context): Int = when (pdfSizeMode(c)) {
-        PDF_SMALL -> 20
-        PDF_STANDARD -> 100
-        PDF_FULL -> 0
-        PDF_CUSTOM -> pdfCustomMb(c)
-        else -> 100
+    fun pdfDpiLabel(c: Context): String = when (pdfDpiMode(c)) {
+        MODE_CUSTOM -> "自定义 ${pdfCustomDpi(c)} dpi"
+        else -> "${pdfDpi(c)} dpi"
     }
 
-    fun pdfModeLabel(c: Context): String = when (pdfSizeMode(c)) {
-        PDF_SMALL -> "小型"
-        PDF_STANDARD -> "标准"
-        PDF_FULL -> "完整"
-        PDF_CUSTOM -> "自定义 ${pdfCustomMb(c)} MB"
-        else -> "标准"
+    // ---------------- 体积上限 ----------------
+
+    /** 体积上限（MB）；0 = 无上限 */
+    fun pdfLimitMb(c: Context): Int = sp(c).getInt(K_LIMIT_MB, 0).coerceIn(0, 2000)
+
+    fun setPdfLimitMb(c: Context, mb: Int) {
+        sp(c).edit().putInt(K_LIMIT_MB, mb.coerceIn(0, 2000)).apply()
+    }
+
+    fun pdfLimitBytes(c: Context): Long = pdfLimitMb(c).toLong() * 1024L * 1024L
+
+    fun pdfLimitLabel(c: Context): String {
+        val mb = pdfLimitMb(c)
+        return if (mb <= 0) "体积不限" else "上限 $mb MB"
     }
 }

@@ -1558,90 +1558,94 @@ class EditorActivity : AppCompatActivity() {
         when (requestCode) {
             REQ_PDF -> {
                 val uri = data.data ?: return
+                val dpi = Prefs.pdfDpi(this)
+                val limitMb = Prefs.pdfLimitMb(this)
+                val opts = pdfOptions.copy(
+                    dpi = dpi,
+                    limitBytes = if (limitMb > 0) limitMb.toLong() * 1024L * 1024L else 0L
+                )
+
+                // ---- 进度对话框：阶段说明 + 百分比 + 水平进度条 ----
+                val msg = TextView(this).apply {
+                    textSize = 12f
+                    setTextColor(0xFF6B6B66.toInt())
+                    setPadding(dp(20f), dp(4f), dp(20f), dp(10f))
+                    text = "$dpi dpi · " +
+                        (if (limitMb > 0) "体积上限 $limitMb MB" else "体积不限")
+                }
+                val bar = android.widget.ProgressBar(
+                    this, null, android.R.attr.progressBarStyleHorizontal
+                ).apply {
+                    max = 100
+                    progress = 0
+                    layoutParams = LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { leftMargin = dp(20f); rightMargin = dp(20f) }
+                }
+                val box = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, dp(8f), 0, dp(4f))
+                    addView(msg)
+                    addView(bar)
+                }
                 val dialog = AlertDialog.Builder(this)
-                    .setTitle("正在导出 PDF…")
-                    .setMessage("准备中…")
+                    .setTitle("正在导出 PDF")
+                    .setView(box)
                     .setCancelable(false)
                     .create()
                 dialog.show()
-                val opts = pdfOptions
-                val dpiStart = Prefs.pdfDpi(this)
-                val limitMb = Prefs.pdfLimitMb(this)
-                val modeLabel = Prefs.pdfModeLabel(this)
+
                 Thread {
-                    var dpi = dpiStart
-                    var attempt = 0
-                    var outFile: java.io.File? = null
-                    var failed: String? = null
-                    // 有硬上限时最多重导 3 次（逐次降精度）；完整档只导一次
-                    val maxAttempts = if (limitMb > 0) 3 else 1
-                    while (attempt < maxAttempts && outFile == null) {
-                        val f = java.io.File(cacheDir, "pdf_export_$attempt.pdf")
-                        val round = attempt + 1
-                        runOnUiThread {
-                            dialog.setMessage("$modeLabel · 第 $round 次渲染（${dpi} dpi）")
-                        }
-                        try {
-                            java.io.FileOutputStream(f).use { fo ->
-                                PdfExporter.exportBlocking(this, project, fo,
-                                    opts.copy(dpi = dpi), object : PdfExporter.Progress {
-                                        override fun onProgress(done: Int, total: Int) {
-                                            runOnUiThread {
-                                                dialog.setMessage("$modeLabel · ${dpi}dpi  ·  渲染 $done / $total")
-                                            }
-                                        }
-
-                                        override fun onStage(text: String) {}
-
-                                        override fun onDone(ok: Boolean, error: String?) {
-                                            if (!ok) failed = error
-                                        }
-                                    })
-                            }
-                        } catch (e: Throwable) {
-                            failed = e.message ?: "导出异常"
-                        }
-                        if (failed != null) {
-                            f.delete()
-                            break
-                        }
-                        val mb = f.length() / (1024.0 * 1024.0)
-                        if (limitMb <= 0 || mb <= limitMb) {
-                            outFile = f
-                        } else {
-                            // 超出上限：降一档精度重导
-                            f.delete()
-                            attempt++
-                            dpi = (dpi * 0.72).toInt().coerceAtLeast(72)
-                        }
-                    }
-
-                    val result = outFile
-                    if (result == null) {
-                        runOnUiThread {
-                            dialog.dismiss()
-                            Toast.makeText(this@EditorActivity,
-                                "导出失败：" + (failed
-                                    ?: "在 ${limitMb}MB 上限内无法完成，可在全局设置中改用更高档位"),
-                                Toast.LENGTH_LONG).show()
-                        }
-                        return@Thread
-                    }
-                    runOnUiThread { dialog.setMessage("正在写入文件…") }
-                    var writeErr: String? = null
+                    val tmpFile = java.io.File(cacheDir, "pdf_export_out.pdf")
+                    var ok = false
+                    var err: String? = null
+                    var note: String? = null
                     try {
-                        val os = contentResolver.openOutputStream(uri)
-                        if (os == null) writeErr = "无法写入目标文件"
-                        else os.use { out -> result.inputStream().use { it.copyTo(out, 64 * 1024) } }
+                        java.io.FileOutputStream(tmpFile).use { fo ->
+                            PdfExporter.exportBlocking(
+                                this, project, fo, opts,
+                                object : PdfExporter.Progress {
+                                    override fun onStage(text: String, percent: Int) {
+                                        runOnUiThread {
+                                            msg.text = "$text  ·  $percent%"
+                                            bar.progress = percent
+                                        }
+                                    }
+
+                                    override fun onDone(
+                                        ok2: Boolean, error: String?, note2: String?
+                                    ) {
+                                        ok = ok2; err = error; note = note2
+                                    }
+                                })
+                        }
                     } catch (e: Throwable) {
-                        writeErr = e.message
+                        err = e.message ?: "导出异常"
                     }
-                    result.delete()
+
+                    var writeErr: String? = null
+                    if (ok) {
+                        runOnUiThread { msg.text = "正在写入文件…  ·  99%"; bar.progress = 99 }
+                        try {
+                            val os = contentResolver.openOutputStream(uri)
+                            if (os == null) writeErr = "无法写入目标文件"
+                            else os.use { o -> tmpFile.inputStream().use { it.copyTo(o, 128 * 1024) } }
+                        } catch (e: Throwable) {
+                            writeErr = e.message
+                        }
+                    }
+                    tmpFile.delete()
+
                     runOnUiThread {
                         dialog.dismiss()
-                        if (writeErr != null) Toast.makeText(this@EditorActivity,
-                            "导出失败：$writeErr", Toast.LENGTH_SHORT).show()
-                        // 成功不弹提示，沿用"不打断操作"的约定
+                        val fail = err ?: writeErr
+                        if (fail != null) {
+                            Toast.makeText(this, "导出失败：$fail", Toast.LENGTH_LONG).show()
+                        } else if (note != null) {
+                            // 成功但未能压到目标体积：告知实际结果
+                            Toast.makeText(this, note, Toast.LENGTH_LONG).show()
+                        }
                     }
                 }.start()
             }
