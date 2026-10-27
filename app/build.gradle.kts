@@ -1,7 +1,25 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
+
+// 签名密钥不入库：路径与口令从 local.properties（已被 .gitignore 忽略）或环境变量读取。
+// 公开仓库中不含任何密钥或口令；克隆者自己的 keystore 请写入 local.properties。
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+
+fun signingProp(key: String, env: String, fallback: String = ""): String =
+    localProps.getProperty(key) ?: System.getenv(env) ?: fallback
+
+val releaseKeystore = rootProject.file(
+    signingProp("folior.storeFile", "FOLIOR_STORE_FILE", "folior.keystore")
+)
+val releaseStorePassword = signingProp("folior.storePassword", "FOLIOR_STORE_PASSWORD")
+val canSignRelease = releaseKeystore.exists() && releaseStorePassword.isNotEmpty()
 
 android {
     namespace = "com.yussy.folior"
@@ -16,18 +34,22 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            storeFile = file("../folior.keystore")
-            storePassword = "folior2026"
-            keyAlias = "folior"
-            keyPassword = "folior2026"
+        if (canSignRelease) {
+            create("release") {
+                storeFile = releaseKeystore
+                storePassword = releaseStorePassword
+                keyAlias = signingProp("folior.keyAlias", "FOLIOR_KEY_ALIAS", "folior")
+                keyPassword = signingProp("folior.keyPassword", "FOLIOR_KEY_PASSWORD", releaseStorePassword)
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            if (canSignRelease) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
