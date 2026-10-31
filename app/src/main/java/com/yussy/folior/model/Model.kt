@@ -98,6 +98,20 @@ fun Page.renderSignature(project: Project): Int {
     return h
 }
 
+/** 本页是否有需要延伸到相邻页的照片 */
+fun Page.hasSpanPhoto(): Boolean = items.any { it.span && it.type == Item.TYPE_PHOTO }
+
+/**
+ * 摄影书页序：第 0 页为封面（单页，靠右）；此后奇数页在左、偶数页在右。
+ * 跨页只在同一对开的两页之间成立，因此「左邻 / 右邻」按对开规则确定，
+ * 而不是简单的 index ± 1。
+ */
+fun leftNeighborOf(index: Int): Int =
+    if (index >= 2 && index % 2 == 0) index - 1 else -1
+
+fun rightNeighborOf(index: Int, total: Int): Int =
+    if (index >= 1 && index % 2 == 1 && index + 1 < total) index + 1 else -1
+
 data class Item(
     var id: String = UUID.randomUUID().toString(),
     var type: String = TYPE_PHOTO,

@@ -9,7 +9,10 @@ import android.graphics.RectF
 import com.yussy.folior.model.Item
 import com.yussy.folior.model.Page
 import com.yussy.folior.model.Project
+import com.yussy.folior.model.hasSpanPhoto
+import com.yussy.folior.model.leftNeighborOf
 import com.yussy.folior.model.parseColor
+import com.yussy.folior.model.rightNeighborOf
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -63,8 +66,12 @@ object PdfExporter {
 
     private sealed class Spec {
         class Blank : Spec()
-        /** @param prevSpan 上一页（左页）中有跨页照片时传入，用于把延伸过来的那半张补齐 */
-        class Single(val page: Page, val prevSpan: Page? = null) : Spec()
+        /**
+         * 单页版式：跨页照片在相邻页上的那一半要补画进来。
+         * @param left  左邻页（其中有跨页照片时）
+         * @param right 右邻页（其中有跨页照片时）
+         */
+        class Single(val page: Page, val left: Page? = null, val right: Page? = null) : Spec()
         class Spread(val l: Page?, val r: Page?) : Spec()
     }
 
@@ -164,14 +171,13 @@ object PdfExporter {
         } else {
             if (opts.insertBlankFirst) list.add(Spec.Blank())
             project.pages.forEachIndexed { i, pg ->
-                // 摄影书：页 0 为封面（右页），此后奇数页在左、偶数页在右。
-                // 右页渲染时若左页有跨页照片，需要把延伸过来的部分补上。
-                val prev = if (i > 0 && i % 2 == 0) {
-                    project.pages[i - 1].takeIf { p ->
-                        p.items.any { it.span && it.type == Item.TYPE_PHOTO }
-                    }
-                } else null
-                list.add(Spec.Single(pg, prev))
+                // 摄影书：第 0 页为封面（右页），此后奇数页在左、偶数页在右。
+                // 相邻页有跨页照片时，延伸过来的那一半要补在本页上。
+                val li = leftNeighborOf(i)
+                val ri = rightNeighborOf(i, project.pages.size)
+                val left = if (li >= 0) project.pages.getOrNull(li)?.takeIf { it.hasSpanPhoto() } else null
+                val right = if (ri >= 0) project.pages.getOrNull(ri)?.takeIf { it.hasSpanPhoto() } else null
+                list.add(Spec.Single(pg, left, right))
             }
         }
         return list
@@ -293,16 +299,14 @@ object PdfExporter {
             is Spec.Single -> {
                 val pr = RectF(0f, 0f, pw.toFloat(), ph.toFloat())
                 PageRenderer.drawPageBackground(project, spec.page, c, pr)
-                // 跨页照片：左页延伸过来的右半张，按左页坐标（整体左移一页宽）绘制
-                spec.prevSpan?.let { prev ->
-                    val prevW = wPt(project, prev) * (pw / wPt(project, spec.page).coerceAtLeast(1f))
-                    c.save()
-                    c.clipRect(pr)
-                    PageRenderer.drawSpanPhotos(ctx, project, prev, c,
-                        RectF(-prevW, 0f, 0f, ph.toFloat()), true, pw)
-                    c.restore()
-                }
+                val save = c.save()
+                c.clipRect(pr)
+                // 跨页照片统一在最底层：邻页延伸进来的 + 本页越界出去的
+                PageRenderer.drawSpillFrom(ctx, project, spec.left, spec.page, c, pr, toRight = false)
+                PageRenderer.drawSpillFrom(ctx, project, spec.right, spec.page, c, pr, toRight = true)
+                PageRenderer.drawSpanPhotos(ctx, project, spec.page, c, pr, true, pw)
                 PageRenderer.drawItems(ctx, project, spec.page, c, pr, true, pw, skipSpan = true)
+                c.restoreToCount(save)
             }
             is Spec.Spread -> {
                 val wl = if (spec.l != null) wPt(project, spec.l) else 0f
@@ -319,9 +323,12 @@ object PdfExporter {
                 spec.r?.let { PageRenderer.drawPageBackground(project, it, c, rightRect) }
                 c.save()
                 c.clipRect(0f, 0f, pw.toFloat(), ph.toFloat())
-                // 跨页照片先画：压过中缝，成为一张连续画面
+                // 跨页照片先画：压过中缝，成为一张连续画面；左右两页都可能向外延伸
                 spec.l?.let {
                     PageRenderer.drawSpanPhotos(ctx, project, it, c, leftRect, true, (wl * kx).toInt())
+                }
+                spec.r?.let {
+                    PageRenderer.drawSpanPhotos(ctx, project, it, c, rightRect, true, (wr * kx).toInt())
                 }
                 spec.l?.let {
                     PageRenderer.drawItems(ctx, project, it, c, leftRect, true, (wl * kx).toInt(), skipSpan = true)

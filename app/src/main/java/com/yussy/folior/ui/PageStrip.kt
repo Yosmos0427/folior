@@ -19,8 +19,11 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.yussy.folior.model.Project
+import com.yussy.folior.model.hasSpanPhoto
 import com.yussy.folior.model.heightMm
+import com.yussy.folior.model.leftNeighborOf
 import com.yussy.folior.model.renderSignature
+import com.yussy.folior.model.rightNeighborOf
 import com.yussy.folior.model.widthMm
 
 /**
@@ -339,15 +342,14 @@ class PageStrip @JvmOverloads constructor(
             holder.thumb.layoutParams = LinearLayout.LayoutParams(
                 w.coerceAtLeast(8), h.coerceAtLeast(8))
 
-            // 右页（偶数索引且非封面）若左邻页有跨页照片，缩略图要把延伸过来的部分一起画
-            val prevSpan = if (pos > 1 && pos % 2 == 0) {
-                p.pages.getOrNull(pos - 1)?.takeIf { pg ->
-                    pg.items.any { it.span && it.type == "photo" }
-                }
-            } else null
+            // 相邻页有跨页照片时，延伸过来的那一半要一起画进本页缩略图（左右双向）
+            val li = leftNeighborOf(pos)
+            val ri = rightNeighborOf(pos, p.pages.size)
+            val leftSpan = if (li >= 0) p.pages.getOrNull(li)?.takeIf { it.hasSpanPhoto() } else null
+            val rightSpan = if (ri >= 0) p.pages.getOrNull(ri)?.takeIf { it.hasSpanPhoto() } else null
 
             val key = "${page.id}_${page.renderSignature(p)}_" +
-                "${prevSpan?.renderSignature(p) ?: 0}_${w}x$h"
+                "${leftSpan?.renderSignature(p) ?: 0}_${rightSpan?.renderSignature(p) ?: 0}_${w}x$h"
             val cached = thumbCache[key]
             if (cached != null) {
                 holder.thumb.setImageBitmap(cached)
@@ -355,7 +357,7 @@ class PageStrip @JvmOverloads constructor(
                 holder.thumb.setImageBitmap(null)
                 holder.thumb.post {
                     if (project === p && p.pages.getOrNull(holder.bindingAdapterPosition) === page) {
-                        val bmp = PageRenderer.renderThumb(context, p, page, w, h, prevSpan)
+                        val bmp = PageRenderer.renderThumb(context, p, page, w, h, leftSpan, rightSpan)
                         thumbCache[key] = bmp
                         holder.thumb.setImageBitmap(bmp)
                     }

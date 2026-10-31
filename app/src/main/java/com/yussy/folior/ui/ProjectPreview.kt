@@ -7,7 +7,10 @@ import android.graphics.Color
 import android.graphics.Paint
 import com.yussy.folior.model.Page
 import com.yussy.folior.model.Project
+import com.yussy.folior.model.hasSpanPhoto
 import com.yussy.folior.model.heightMm
+import com.yussy.folior.model.leftNeighborOf
+import com.yussy.folior.model.rightNeighborOf
 import com.yussy.folior.model.widthMm
 import kotlin.math.ceil
 import kotlin.math.max
@@ -117,7 +120,12 @@ object ProjectPreview {
                 val x = margin + col * (cellW + gap) + (cellW - cw) / 2f
                 val oy = y + (rowH - ch) / 2f
 
-                val thumb = PageRenderer.renderThumb(ctx, project, page, cw, ch)
+                val idx = slot - lead
+                val li = leftNeighborOf(idx)
+                val ri = rightNeighborOf(idx, pages.size)
+                val leftSpan = if (li >= 0) pages.getOrNull(li)?.takeIf { it.hasSpanPhoto() } else null
+                val rightSpan = if (ri >= 0) pages.getOrNull(ri)?.takeIf { it.hasSpanPhoto() } else null
+                val thumb = PageRenderer.renderThumb(ctx, project, page, cw, ch, leftSpan, rightSpan)
                 c.drawBitmap(thumb, x, oy, null)
                 thumb.recycle()
                 c.drawRect(x, oy, x + cw, oy + ch, border)

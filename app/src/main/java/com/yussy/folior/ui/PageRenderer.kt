@@ -65,8 +65,8 @@ object PageRenderer {
     }
 
     /**
-     * 跨页照片：以所在页的坐标系绘制，宽度越过页面右边界继续延伸，
-     * 由调用方裁切到「双页合围」区域。绘制顺序上它压过书脊，形成连续画面。
+     * 跨页照片：以所在页的坐标系绘制，可越过页面左右边界继续延伸，
+     * 由调用方裁切到「有页面的那一侧」区域。绘制顺序上它压过书脊，形成连续画面。
      */
     fun drawSpanPhotos(
         ctx: Context, project: Project, page: Page,
@@ -79,6 +79,32 @@ object PageRenderer {
             drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
                 isExhibition, highQuality, pxHint)
         }
+    }
+
+    /**
+     * 把相邻页的跨页照片按「物理尺寸」映射到本页坐标系绘制，
+     * 只保留落在本页内的部分 —— 于是超出页面边界的照片被单页边界切成两半，
+     * 各页各画自己那一半，并起来仍是一张连续画面。
+     *
+     * @param neighbor 相邻页（没有跨页照片时传 null）
+     * @param toRight  true = 邻页在本页右侧（它的左overflow延伸进来）
+     */
+    fun drawSpillFrom(
+        ctx: Context, project: Project, neighbor: Page?, page: Page,
+        canvas: android.graphics.Canvas, rect: RectF,
+        toRight: Boolean
+    ) {
+        if (neighbor == null || !neighbor.hasSpanPhoto()) return
+        val kx = rect.width() / page.widthMm(project).coerceAtLeast(1f)
+        val nw = neighbor.widthMm(project) * kx
+        val nh = neighbor.heightMm(project) * kx
+        val top = rect.top + (rect.height() - nh) / 2f
+        val nRect = if (toRight) RectF(rect.right, top, rect.right + nw, top + nh)
+        else RectF(rect.left - nw, top, rect.left, top + nh)
+        val save = canvas.save()
+        canvas.clipRect(rect)
+        drawSpanPhotos(ctx, project, neighbor, canvas, nRect, false, nw.toInt())
+        canvas.restoreToCount(save)
     }
 
     fun drawItem(
@@ -442,27 +468,25 @@ object PageRenderer {
 
     /**
      * 渲染整页到位图（缩略图用）。
-     * @param prevSpan 右页的缩略图传入左侧前页：该页的跨页照片会延伸补绘到本页左侧
+     * @param leftSpan  左侧相邻页：其中有跨页照片时，延伸进来的那一半会补绘在本页左边
+     * @param rightSpan 右侧相邻页：同上，补绘在本页右边
      */
     fun renderThumb(
         ctx: Context, project: Project, page: Page, wPx: Int, hPx: Int,
-        prevSpan: Page? = null
+        leftSpan: Page? = null, rightSpan: Page? = null
     ): Bitmap {
         val bmp = Bitmap.createBitmap(wPx.coerceAtLeast(1), hPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val c = android.graphics.Canvas(bmp)
         val rect = RectF(0f, 0f, wPx.toFloat(), hPx.toFloat())
         drawPageBackground(project, page, c, rect)
-        if (prevSpan != null) {
-            val prevW = prevSpan.widthMm(project) / page.widthMm(project).coerceAtLeast(1f) * wPx
-            c.save()
-            c.clipRect(rect)
-            drawSpanPhotos(ctx, project, prevSpan, c, RectF(-prevW, 0f, 0f, hPx.toFloat()))
-            c.restore()
-        }
-        c.save()
+        // 跨页照片统一在最底层（与双联编辑区一致）：邻页延伸进来的 + 本页越界出去的
+        drawSpillFrom(ctx, project, leftSpan, page, c, rect, toRight = false)
+        drawSpillFrom(ctx, project, rightSpan, page, c, rect, toRight = true)
+        val save = c.save()
         c.clipRect(rect)
-        drawItems(ctx, project, page, c, rect)
-        c.restore()
+        drawSpanPhotos(ctx, project, page, c, rect)
+        drawItems(ctx, project, page, c, rect, skipSpan = true)
+        c.restoreToCount(save)
         return bmp
     }
 }

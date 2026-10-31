@@ -223,14 +223,19 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     /**
-     * 跨页判定（双联摄影书）：左页的照片向右越出页面边界即视为跨页，
-     * 超出部分接着画到右页、压过书脊；拉回页内则恢复普通照片。
+     * 跨页判定（双联摄影书）：照片越出页面边界，且那一侧确实有相邻页时，
+     * 就视为跨页 —— 超出的部分接着画到相邻页上；拉回页内则恢复普通照片。
+     * 左右双向对称：左页照片可向右跨，右页照片可向左跨。
      */
     private fun updateSpanFlag(item: Item) {
-        if (!spreadMode || project?.type != Project.TYPE_BOOK) return
+        if (!spreadMode || project?.type != Project.TYPE_BOOK) { item.span = false; return }
         if (item.type != Item.TYPE_PHOTO) return
         val slot = slotOf(item) ?: return
-        item.span = slot.index == leftIndex && rightIndex >= 0 && (item.x + item.w) > 1.002f
+        val hasLeft = slots.any { it.index != slot.index && it.rect.right <= slot.rect.left + 0.5f }
+        val hasRight = slots.any { it.index != slot.index && it.rect.left >= slot.rect.right - 0.5f }
+        val spillsLeft = item.x < -0.002f
+        val spillsRight = item.x + item.w > 1.002f
+        item.span = (spillsLeft && hasLeft) || (spillsRight && hasRight)
     }
 
     fun select(item: Item?) {
@@ -272,26 +277,37 @@ class PageCanvas @JvmOverloads constructor(
 
         if (spreadMode) {
             val gutter = spineGapPx()
-            val halfW = (vw - margin * 2 - gutter) / 2f
-            val maxPh = vh - margin * 2
+            val maxW = (vw - margin * 2 - gutter).coerceAtLeast(1f)
+            val maxH = vh - margin * 2
             val cy = vh / 2f
-            fun fit(aspect: Float): Pair<Float, Float> {
-                var pw = halfW
-                var ph = pw / aspect
-                if (ph > maxPh) { ph = maxPh; pw = ph * aspect }
-                return pw to ph
-            }
-            if (leftIndex in 0 until p.pages.size) {
-                val (pw, ph) = fit(aspectOf(leftIndex))
+            val hasL = leftIndex in 0 until p.pages.size
+            val hasR = rightIndex in 0 until p.pages.size
+            val lw = if (hasL) p.pages[leftIndex].widthMm(p) else 0f
+            val lh = if (hasL) p.pages[leftIndex].heightMm(p) else 0f
+            val rw = if (hasR) p.pages[rightIndex].widthMm(p) else 0f
+            val rh = if (hasR) p.pages[rightIndex].heightMm(p) else 0f
+
+            if (hasL && hasR) {
+                // 两页共用一个 px/mm 比例：同一物理平面上并置，跨页照片才能严格连续
+                val k = min(maxW / (lw + rw).coerceAtLeast(1f), maxH / max(lh, rh).coerceAtLeast(1f))
                 slots.add(Slot(leftIndex, RectF(
-                    vw / 2f - gutter / 2f - pw, cy - ph / 2f,
-                    vw / 2f - gutter / 2f, cy + ph / 2f)))
-            }
-            if (rightIndex in 0 until p.pages.size) {
-                val (pw, ph) = fit(aspectOf(rightIndex))
+                    vw / 2f - gutter / 2f - lw * k, cy - lh * k / 2f,
+                    vw / 2f - gutter / 2f, cy + lh * k / 2f)))
                 slots.add(Slot(rightIndex, RectF(
-                    vw / 2f + gutter / 2f, cy - ph / 2f,
-                    vw / 2f + gutter / 2f + pw, cy + ph / 2f)))
+                    vw / 2f + gutter / 2f, cy - rh * k / 2f,
+                    vw / 2f + gutter / 2f + rw * k, cy + rh * k / 2f)))
+            } else if (hasL) {
+                // 只有左页（末页单独成页）：留在左半幅
+                val k = min(maxW / 2f / lw.coerceAtLeast(1f), maxH / lh.coerceAtLeast(1f))
+                slots.add(Slot(leftIndex, RectF(
+                    vw / 2f - gutter / 2f - lw * k, cy - lh * k / 2f,
+                    vw / 2f - gutter / 2f, cy + lh * k / 2f)))
+            } else if (hasR) {
+                // 只有右页（封面）：留在右半幅
+                val k = min(maxW / 2f / rw.coerceAtLeast(1f), maxH / rh.coerceAtLeast(1f))
+                slots.add(Slot(rightIndex, RectF(
+                    vw / 2f + gutter / 2f, cy - rh * k / 2f,
+                    vw / 2f + gutter / 2f + rw * k, cy + rh * k / 2f)))
             }
         } else {
             val aspect = aspectOf(activeIndex)
@@ -310,24 +326,30 @@ class PageCanvas @JvmOverloads constructor(
     private fun spineGapPx(): Float =
         Prefs.spineGapDp(context) * resources.displayMetrics.density
 
-    /**
-     * 书脊：双联两页之间的缝隙。
-     * 留白 = 只留缝；线编 = 纸面 + 折痕 + 交叉缝线；活页 = 纸面 + 金属环。
-     */
-    private fun drawSpine(canvas: Canvas, p: Project) {
+    /** 书脊在两页之间的矩形区域；无书脊间隙时返回 null */
+    private fun spineRect(): RectF? {
         val gap = spineGapPx()
-        if (gap <= 0.5f || slots.size < 2) return
+        if (gap <= 0.5f || slots.size < 2) return null
         val l = slots[0].rect
         val r = slots[1].rect
         val cx = (l.right + r.left) / 2f
-        val rect = RectF(cx - gap / 2f, min(l.top, r.top), cx + gap / 2f, max(l.bottom, r.bottom))
+        return RectF(cx - gap / 2f, min(l.top, r.top), cx + gap / 2f, max(l.bottom, r.bottom))
+    }
 
+    /** 书脊底板：纸面填充，画在内容之下 */
+    private fun drawSpineBase(canvas: Canvas, p: Project) {
+        val rect = spineRect() ?: return
         val page = p.pages.getOrNull(slots[0].index)
         val base = if (page != null) PageRenderer.pageBgColor(p, page) else Color.WHITE
         val fill = Paint(Paint.ANTI_ALIAS_FLAG)
         fill.color = base
         canvas.drawRect(rect, fill)
+    }
 
+    /** 书脊细节（折痕 / 缝线 / 金属环），画在内容之上 */
+    private fun drawSpineDetail(canvas: Canvas, p: Project) {
+        val rect = spineRect() ?: return
+        val cx = (slots[0].rect.right + slots[1].rect.left) / 2f
         when (Prefs.spineStyle(context)) {
             Prefs.SPINE_STITCH -> drawStitchSpine(canvas, rect, cx)
             Prefs.SPINE_RING -> drawRingSpine(canvas, rect, cx)
@@ -406,8 +428,8 @@ class PageCanvas @JvmOverloads constructor(
             PageRenderer.drawPageBackground(p, page, canvas, s.rect)
         }
 
-        // 书脊（双联摄影书）：在两页之间按全局设置呈现
-        if (spreadMode && p.type == Project.TYPE_BOOK) drawSpine(canvas, p)
+        // 书脊底色（双联摄影书）：先铺纸面，细节（折痕/缝线/环）留到最后画在内容之上
+        if (spreadMode && p.type == Project.TYPE_BOOK) drawSpineBase(canvas, p)
 
         if (slots.isNotEmpty()) {
             val union = RectF(slots[0].rect)
@@ -439,7 +461,8 @@ class PageCanvas @JvmOverloads constructor(
                 canvas.restoreToCount(layer)
             }
 
-            // 跨页照片：以所在页（左页）为坐标系延伸，裁到双页合围区域，压过书脊成连续画面
+            // 跨页照片：以所在页为坐标系绘制，可向左右任一方向越过书脊，
+            // 裁到「双页合围」区域 —— 哪个方向有页面，超出部分就落在那一页上
             if (spreadMode && slots.size == 2 && p.type == Project.TYPE_BOOK) {
                 canvas.save()
                 canvas.clipRect(union)
@@ -450,15 +473,20 @@ class PageCanvas @JvmOverloads constructor(
                 canvas.restore()
             }
 
-            // 内容：裁切到"双页合围"区域，墙面内正常渲染；跨页照片已在上一层单独绘制
+            // 内容：逐页裁到各自页面内——普通元素越界即被裁掉（越界部分另有浅色预览），
+            // 跨页照片已在上一层单独绘制
             val spansDrawn = spreadMode && slots.size == 2 && p.type == Project.TYPE_BOOK
-            canvas.save()
-            canvas.clipRect(union)
             for (s in slots) {
                 val page = p.pages.getOrNull(s.index) ?: continue
+                canvas.save()
+                canvas.clipRect(s.rect)
                 PageRenderer.drawItems(context, p, page, canvas, s.rect, skipSpan = spansDrawn)
+                canvas.restore()
             }
-            canvas.restore()
+
+            // 书脊细节压在最上层：跨页大图会被折痕/缝线/金属环「分割」，
+            // 与实体书摊开时的观感一致
+            if (spreadMode && p.type == Project.TYPE_BOOK) drawSpineDetail(canvas, p)
         }
 
         // 绘制模式：落笔中的实时笔画预览（抬笔后成为正式元素）
@@ -923,6 +951,7 @@ class PageCanvas @JvmOverloads constructor(
                     if (it.printMm != null && multiInitialPrintMm > 0f)
                         it.printMm = multiInitialPrintMm * scale
                     it.rotation = snapAngle(multiInitialRot + deltaAngle)
+                    updateSpanFlag(it)
                     invalidate()
                 } else if (dragging && selected != null) {
                     val it = selected!!
@@ -1159,6 +1188,7 @@ class PageCanvas @JvmOverloads constructor(
         // 中心保持
         it.x = cxN - it.w / 2f
         it.y = cyN - it.h / 2f
+        updateSpanFlag(it)          // 放大后越界即跨页
         invalidate()
     }
 

@@ -16,8 +16,11 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.yussy.folior.model.Page
 import com.yussy.folior.model.Project
+import com.yussy.folior.model.hasSpanPhoto
 import com.yussy.folior.model.heightMm
+import com.yussy.folior.model.leftNeighborOf
 import com.yussy.folior.model.renderSignature
+import com.yussy.folior.model.rightNeighborOf
 import com.yussy.folior.model.widthMm
 
 /**
@@ -87,7 +90,8 @@ class LightTable @JvmOverloads constructor(
 
     // 分帧渲染队列：避免一次性画几十张缩略图卡住展开动画
     private class RenderTask(
-        val page: Page, val key: String, val w: Int, val h: Int, val iv: ImageView
+        val page: Page, val key: String, val w: Int, val h: Int, val iv: ImageView,
+        val leftSpan: Page? = null, val rightSpan: Page? = null
     )
     private val renderQueue = ArrayDeque<RenderTask>()
     private val renderHandler = Handler(Looper.getMainLooper())
@@ -108,7 +112,8 @@ class LightTable @JvmOverloads constructor(
                     }
                     val p = project ?: continue
                     val bmp = try {
-                        PageRenderer.renderThumb(context, p, t.page, t.w, t.h)
+                        PageRenderer.renderThumb(context, p, t.page, t.w, t.h,
+                            t.leftSpan, t.rightSpan)
                     } catch (e: Throwable) {
                         null   // 单张失败（OOM 等）不能拖垮整个队列
                     }
@@ -279,11 +284,16 @@ class LightTable @JvmOverloads constructor(
         if (pages.isEmpty()) return
         preloadThread?.interrupt()
         preloadThread = Thread {
-            for (page in pages) {
+            for ((idx, page) in pages.withIndex()) {
                 if (Thread.currentThread().isInterrupted) return@Thread
-                val key = "${page.id}_${page.renderSignature(p)}_${w}x$h"
+                val li = leftNeighborOf(idx)
+                val ri = rightNeighborOf(idx, pages.size)
+                val leftSpan = if (li >= 0) pages.getOrNull(li)?.takeIf { it.hasSpanPhoto() } else null
+                val rightSpan = if (ri >= 0) pages.getOrNull(ri)?.takeIf { it.hasSpanPhoto() } else null
+                val key = "${page.id}_${page.renderSignature(p)}_" +
+                    "${leftSpan?.renderSignature(p) ?: 0}_${rightSpan?.renderSignature(p) ?: 0}_${w}x$h"
                 val bmp = try {
-                    PageRenderer.renderThumb(context, p, page, w, h)
+                    PageRenderer.renderThumb(context, p, page, w, h, leftSpan, rightSpan)
                 } catch (_: Throwable) {
                     null
                 } ?: continue
@@ -384,7 +394,13 @@ class LightTable @JvmOverloads constructor(
 
             // tag 用于渲染队列的身份校验：View 复用时随之改变，旧任务自动失效
             holder.thumb.tag = page.id
-            val key = "${page.id}_${page.renderSignature(p)}_${cellW}x${imgH}"
+            // 相邻页有跨页照片时，本页格子里要一起画出延伸过来的那一半
+            val li = leftNeighborOf(pos)
+            val ri = rightNeighborOf(pos, p.pages.size)
+            val leftSpan = if (li >= 0) p.pages.getOrNull(li)?.takeIf { it.hasSpanPhoto() } else null
+            val rightSpan = if (ri >= 0) p.pages.getOrNull(ri)?.takeIf { it.hasSpanPhoto() } else null
+            val key = "${page.id}_${page.renderSignature(p)}_" +
+                "${leftSpan?.renderSignature(p) ?: 0}_${rightSpan?.renderSignature(p) ?: 0}_${cellW}x${imgH}"
             val cached = thumbCache[key]
             if (cached != null) {
                 holder.thumb.setImageBitmap(cached)
@@ -392,7 +408,7 @@ class LightTable @JvmOverloads constructor(
                 holder.thumb.setImageBitmap(null)
                 // 注意：不在此清空队列 —— 清空会丢掉尚未渲染的任务且不重绑定，
                 // 造成"永久空白"。失效任务在 drain 里被 tag 校验瞬时丢弃，不会积压。
-                renderQueue.addLast(RenderTask(page, key, cellW, imgH, holder.thumb))
+                renderQueue.addLast(RenderTask(page, key, cellW, imgH, holder.thumb, leftSpan, rightSpan))
                 if (!renderRunning) {
                     renderRunning = true
                     renderHandler.post(renderDrain)
