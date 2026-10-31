@@ -228,7 +228,8 @@ class PageCanvas @JvmOverloads constructor(
      * 左右双向对称：左页照片可向右跨，右页照片可向左跨。
      */
     private fun updateSpanFlag(item: Item) {
-        if (!spreadMode || project?.type != Project.TYPE_BOOK) { item.span = false; return }
+        // 非双联视图不做跨页判定，但也不清掉已有状态（避免竖屏微调一次就丢跨页）
+        if (!spreadMode || project?.type != Project.TYPE_BOOK) return
         if (item.type != Item.TYPE_PHOTO) return
         val slot = slotOf(item) ?: return
         val hasLeft = slots.any { it.index != slot.index && it.rect.right <= slot.rect.left + 0.5f }
