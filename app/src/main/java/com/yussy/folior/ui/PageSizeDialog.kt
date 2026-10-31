@@ -14,12 +14,15 @@ import android.widget.TextView
 object PageSizeDialog {
 
     /**
-     * 宽×高输入，可选同管本页底色。
-     * @param bg 非 null 时在对话框内显示「本页底色」色块（点击选色）
+     * 宽×高输入，可同时管理本页颜色。
+     * @param projectBg 非 null 时显示颜色区（勾选框 + 色块），值用于预览「应用项目设置」
+     * @param pageBg 页面自身颜色；null = 跟随项目
+     * @param onDone bg 为 null 表示跟随项目设置
      */
     fun show(
         ctx: Context, title: String, initW: Float, initH: Float,
-        bg: String? = null,
+        projectBg: String? = null,
+        pageBg: String? = null,
         onDone: (w: Float, h: Float, bg: String?) -> Unit
     ) {
         val d = ctx.resources.displayMetrics.density
@@ -71,8 +74,8 @@ object PageSizeDialog {
             setPadding(px(3f), px(6f), 0, 0)
         })
 
-        var pickedBg: String? = null      // 仅记录用户实际选择的颜色；未选则保持继承项目默认色
-        if (bg != null) root.addView(makeBgRow(ctx, bg) { pickedBg = it })
+        var pickedBg: String? = pageBg
+        if (projectBg != null) root.addView(makeBgRow(ctx, projectBg, pageBg) { pickedBg = it })
 
         AlertDialog.Builder(ctx)
             .setTitle(title)
@@ -92,7 +95,8 @@ object PageSizeDialog {
 fun showWall(
     ctx: Context, title: String, initWmm: Float, initHmm: Float,
     presets: List<Triple<String, Float, Float>> = emptyList(),
-    bg: String? = null,
+    projectBg: String? = null,
+    pageBg: String? = null,
     onDone: (w: Float, h: Float, bg: String?) -> Unit
 ) {
     val d = ctx.resources.displayMetrics.density
@@ -177,8 +181,8 @@ fun showWall(
         setPadding(px(3f), px(8f), 0, 0)
     })
 
-    var pickedBg: String? = null          // 仅记录用户实际选择的颜色；未选则保持继承项目默认色
-    if (bg != null) root.addView(makeBgRow(ctx, bg) { pickedBg = it })
+    var pickedBg: String? = pageBg
+    if (projectBg != null) root.addView(makeBgRow(ctx, projectBg, pageBg) { pickedBg = it })
 
     AlertDialog.Builder(ctx)
         .setTitle(title)
@@ -195,44 +199,92 @@ fun showWall(
 }
 
 /**
- * 「本页底色」行：左侧说明 + 右侧色块。色块显示当前颜色，点击打开调色板；
- * 选色只更新色块，点「确定」才随尺寸一起提交。
+ * 「页面颜色」区：
+ *  - 勾选「应用项目设置」= 跟随项目默认色（页面自身色为 null），色块置灰；
+ *  - 取消勾选后可单独选色，色块可点开调色板。
+ * 回调参数 null 表示跟随项目。
  */
-private fun makeBgRow(ctx: Context, initBg: String, onPick: (String) -> Unit): LinearLayout {
+private fun makeBgRow(
+    ctx: Context, projectBg: String, pageBg: String?,
+    onPick: (String?) -> Unit
+): LinearLayout {
     val d = ctx.resources.displayMetrics.density
     fun px(v: Float) = (v * d).toInt()
-    val row = LinearLayout(ctx).apply {
+
+    var custom = pageBg            // 页面自选色（null = 尚未选过）
+    var follow = pageBg == null
+
+    fun chipDrawable(hex: String): GradientDrawable {
+        val c = try {
+            android.graphics.Color.parseColor(hex)
+        } catch (e: Exception) {
+            android.graphics.Color.WHITE
+        }
+        return GradientDrawable().apply {
+            cornerRadius = 8f * d
+            setColor(c)
+            setStroke(px(1f), 0xFFDDDDD6.toInt())
+        }
+    }
+
+    val box = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+
+    // 勾选行
+    val followRow = LinearLayout(ctx).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
         setPadding(0, px(16f), 0, 0)
     }
-    row.addView(TextView(ctx).apply {
-        text = "本页底色"
+    followRow.addView(TextView(ctx).apply {
+        text = "应用项目设置"
         textSize = 13f
         setTextColor(0xFF1A1A18.toInt())
     }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+    val check = TextView(ctx).apply { textSize = 16f }
+    followRow.addView(check)
 
-    var cur = initBg
+    // 色块行
+    val colorRow = LinearLayout(ctx).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(0, px(12f), 0, 0)
+    }
+    colorRow.addView(TextView(ctx).apply {
+        text = "页面颜色"
+        textSize = 13f
+        setTextColor(0xFF1A1A18.toInt())
+    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     val chip = TextView(ctx).apply {
-        text = ""
-        background = GradientDrawable().apply {
-            cornerRadius = 8f * d
-            setColor(android.graphics.Color.parseColor(cur))
-            setStroke(px(1f), 0xFFDDDDD6.toInt())
-        }
-        contentDescription = "选择本页底色"
-        setOnClickListener {
-            ColorPickerDialog.show(ctx, "本页底色", cur) { c ->
-                cur = c
-                onPick(c)
-                background = GradientDrawable().apply {
-                    cornerRadius = 8f * d
-                    setColor(android.graphics.Color.parseColor(c))
-                    setStroke(px(1f), 0xFFDDDDD6.toInt())
-                }
-            }
+        layoutParams = LinearLayout.LayoutParams(px(64f), px(34f))
+    }
+    colorRow.addView(chip)
+
+    fun sync() {
+        check.text = if (follow) "✓" else "　"
+        check.setTextColor(if (follow) 0xFFB5442A.toInt() else 0xFFC0C0BA.toInt())
+        val shown = if (follow) projectBg else (custom ?: projectBg)
+        chip.background = chipDrawable(shown)
+        chip.alpha = if (follow) 0.45f else 1f
+        colorRow.alpha = if (follow) 0.55f else 1f
+    }
+
+    followRow.setOnClickListener {
+        follow = !follow
+        if (!follow && custom == null) custom = projectBg   // 取消勾选时以项目色为起点
+        sync()
+        onPick(if (follow) null else custom)
+    }
+    chip.setOnClickListener {
+        if (follow) return@setOnClickListener
+        ColorPickerDialog.show(ctx, "页面颜色", custom ?: projectBg) { c ->
+            custom = c
+            sync()
+            onPick(c)
         }
     }
-    row.addView(chip, LinearLayout.LayoutParams(px(64f), px(34f)))
-    return row
+
+    box.addView(followRow)
+    box.addView(colorRow)
+    sync()
+    return box
 }

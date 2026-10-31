@@ -20,6 +20,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.yussy.folior.model.Project
 import com.yussy.folior.model.heightMm
+import com.yussy.folior.model.renderSignature
 import com.yussy.folior.model.widthMm
 
 /**
@@ -40,6 +41,8 @@ class PageStrip @JvmOverloads constructor(
 
     var onPageSelected: ((Int) -> Unit)? = null
     var onPageReordered: ((Int) -> Unit)? = null
+    /** 长按开始拖动页序时回调（外部据此记录撤销起点，整个拖动算一步） */
+    var onReorderStart: (() -> Unit)? = null
     var onPageAdded: (() -> Unit)? = null
 
     /** 滑动呼出删除按钮后点击删除：参数为页索引 */
@@ -129,6 +132,7 @@ class PageStrip @JvmOverloads constructor(
             override fun onSelectedChanged(vh: RecyclerView.ViewHolder?, actionState: Int) {
                 super.onSelectedChanged(vh, actionState)
                 if (actionState == ItemTouchHelper.ACTION_STATE_DRAG && vh != null) {
+                    onReorderStart?.invoke()
                     vh.itemView.alpha = 0.55f
                     vh.itemView.scaleX = 1.04f; vh.itemView.scaleY = 1.04f
                     // 注意：这里绝不能 notifyDataSetChanged —— 拖动刚启动时重排会让
@@ -213,10 +217,13 @@ class PageStrip @JvmOverloads constructor(
         }
     }
 
-    /** 刷新缩略图（不改变滚动位置） */
+    /**
+     * 刷新缩略图（不改变滚动位置）。
+     * 不清空缓存：缓存的 key 含页面渲染指纹，内容未变的页直接命中旧位图，
+     * 只有指纹变化的页才会重新渲染（改页面设置只重画本页，改项目设置才波及全部）。
+     */
     fun refresh() {
         computeAvail()
-        thumbCache.clear()
         stripAdapter.notifyDataSetChanged()
     }
 
@@ -332,7 +339,7 @@ class PageStrip @JvmOverloads constructor(
             holder.thumb.layoutParams = LinearLayout.LayoutParams(
                 w.coerceAtLeast(8), h.coerceAtLeast(8))
 
-            val key = "${page.id}_${w}x$h"
+            val key = "${page.id}_${page.renderSignature(p)}_${w}x$h"
             val cached = thumbCache[key]
             if (cached != null) {
                 holder.thumb.setImageBitmap(cached)

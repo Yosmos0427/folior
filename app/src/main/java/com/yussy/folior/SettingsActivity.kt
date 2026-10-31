@@ -31,6 +31,8 @@ class SettingsActivity : AppCompatActivity() {
     private val dpiChecks = ArrayList<Pair<String, TextView>>()
     /** 体积行 → 勾选标记（key：MB，-1 = 自定义） */
     private val limitChecks = ArrayList<Pair<Int, TextView>>()
+    /** 书脊样式 → 勾选标记 */
+    private val spineChecks = ArrayList<Pair<String, TextView>>()
 
     private companion object {
         const val LIMIT_NONE = 0
@@ -91,6 +93,14 @@ class SettingsActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20f), dp(4f), dp(20f), dp(32f))
         }
+
+        content.addView(sectionLabel("书脊"))
+        content.addView(hint("横屏双联查看时两页之间的处理方式。只影响编辑器的工作区显示，不改变页面内容。"))
+
+        content.addView(spineRow(Prefs.SPINE_NONE, "无", "两页贴合，中间没有空隙"))
+        content.addView(spineRow(Prefs.SPINE_GAP, "留白", "留一条细缝"))
+        content.addView(spineRow(Prefs.SPINE_STITCH, "线编", "折痕与交叉缝线"))
+        content.addView(spineRow(Prefs.SPINE_RING, "活页", "一列金属环"))
 
         content.addView(sectionLabel("PDF 导出"))
         content.addView(hint("导出 PDF 的画质与文件大小，两项设置相互独立。"))
@@ -348,6 +358,15 @@ class SettingsActivity : AppCompatActivity() {
         return row
     }
 
+    private fun spineRow(style: String, title: String, desc: String): LinearLayout {
+        val (row, _, check) = optionRow(title, desc) {
+            Prefs.setSpineStyle(this, style)
+            refresh()
+        }
+        spineChecks.add(style to check)
+        return row
+    }
+
     /** 自定义精度：标题行（可选中）+ dpi 输入 */
     private fun dpiCustomBlock(): LinearLayout {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -455,6 +474,15 @@ class SettingsActivity : AppCompatActivity() {
         limitInput.alpha = if (limitMb > 0 && limitMb !in LIMIT_PRESETS) 1f else 0.6f
         summary.text = "当前：${Prefs.pdfDpi(this)} dpi · ${Prefs.pdfLimitLabel(this)}"
         updateBlankCheck()
+        updateSpineChecks()
+    }
+
+    /** 书脊样式的勾选标记 */
+    private fun updateSpineChecks() {
+        val cur = Prefs.spineStyle(this)
+        spineChecks.forEach { (style, check) ->
+            check.visibility = if (style == cur) View.VISIBLE else View.INVISIBLE
+        }
     }
 
     /** 保留空白页的开/关标记 */
@@ -486,5 +514,6 @@ class SettingsActivity : AppCompatActivity() {
 
         summary.text = "当前：${Prefs.pdfDpi(this)} dpi · ${Prefs.pdfLimitLabel(this)}"
         updateBlankCheck()
+        updateSpineChecks()
     }
 }

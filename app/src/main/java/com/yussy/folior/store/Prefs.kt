@@ -23,6 +23,7 @@ object Prefs {
     private const val K_LIMIT_MB = "pdf_limit_mb"
     private const val K_PREVIEW_BG = "preview_bg_color"
     private const val K_PREVIEW_KEEP_BLANK = "preview_keep_blank"
+    private const val K_SPINE = "spread_spine_style"
 
     private fun sp(c: Context) = c.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
@@ -86,5 +87,27 @@ object Prefs {
 
     fun setPreviewKeepBlank(c: Context, keep: Boolean) {
         sp(c).edit().putBoolean(K_PREVIEW_KEEP_BLANK, keep).apply()
+    }
+
+    // ---------------- 书脊（横屏双联） ----------------
+
+    /** 无 = 两页贴合 / 留白 = 细缝 / 线编 = 缝线 / 活页 = 金属环 */
+    const val SPINE_NONE = "none"
+    const val SPINE_GAP = "gap"
+    const val SPINE_STITCH = "stitch"
+    const val SPINE_RING = "ring"
+
+    fun spineStyle(c: Context): String = sp(c).getString(K_SPINE, SPINE_GAP) ?: SPINE_GAP
+
+    fun setSpineStyle(c: Context, style: String) {
+        sp(c).edit().putString(K_SPINE, style).apply()
+    }
+
+    /** 双联时两页之间的间距（dp）：无书脊贴合，留白最窄，线编与活页需要容纳纹理 */
+    fun spineGapDp(c: Context): Float = when (spineStyle(c)) {
+        SPINE_NONE -> 0f
+        SPINE_STITCH -> 12f
+        SPINE_RING -> 16f
+        else -> 3f
     }
 }

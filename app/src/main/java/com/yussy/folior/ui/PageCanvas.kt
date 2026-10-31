@@ -8,6 +8,7 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.View
 import com.yussy.folior.model.*
+import com.yussy.folior.store.Prefs
 import kotlin.math.*
 
 /**
@@ -259,7 +260,7 @@ class PageCanvas @JvmOverloads constructor(
         }
 
         if (spreadMode) {
-            val gutter = 3f * d
+            val gutter = spineGapPx()
             val halfW = (vw - margin * 2 - gutter) / 2f
             val maxPh = vh - margin * 2
             val cy = vh / 2f
@@ -294,6 +295,86 @@ class PageCanvas @JvmOverloads constructor(
 
     // ---------------- 绘制 ----------------
 
+    /** 双联时两页之间的书脊间距（px），由全局设置决定 */
+    private fun spineGapPx(): Float =
+        Prefs.spineGapDp(context) * resources.displayMetrics.density
+
+    /**
+     * 书脊：双联两页之间的缝隙。
+     * 留白 = 只留缝；线编 = 纸面 + 折痕 + 交叉缝线；活页 = 纸面 + 金属环。
+     */
+    private fun drawSpine(canvas: Canvas, p: Project) {
+        val gap = spineGapPx()
+        if (gap <= 0.5f || slots.size < 2) return
+        val l = slots[0].rect
+        val r = slots[1].rect
+        val cx = (l.right + r.left) / 2f
+        val rect = RectF(cx - gap / 2f, min(l.top, r.top), cx + gap / 2f, max(l.bottom, r.bottom))
+
+        val page = p.pages.getOrNull(slots[0].index)
+        val base = if (page != null) PageRenderer.pageBgColor(p, page) else Color.WHITE
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+        fill.color = base
+        canvas.drawRect(rect, fill)
+
+        when (Prefs.spineStyle(context)) {
+            Prefs.SPINE_STITCH -> drawStitchSpine(canvas, rect, cx)
+            Prefs.SPINE_RING -> drawRingSpine(canvas, rect, cx)
+        }
+    }
+
+    /** 线编：两条折痕 + 一列交叉缝线 */
+    private fun drawStitchSpine(canvas: Canvas, rect: RectF, cx: Float) {
+        val d = resources.displayMetrics.density
+        val crease = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0x26000000
+            strokeWidth = 1f * d
+        }
+        val inset = rect.width() * 0.3f
+        canvas.drawLine(cx - inset, rect.top, cx - inset, rect.bottom, crease)
+        canvas.drawLine(cx + inset, rect.top, cx + inset, rect.bottom, crease)
+
+        val thread = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFF8A6A4B.toInt()
+            strokeWidth = 1.1f * d
+            strokeCap = Paint.Cap.ROUND
+        }
+        val step = 16f * d
+        val half = rect.width() * 0.42f
+        val drop = rect.width() * 0.26f
+        var y = rect.top + step * 0.6f
+        while (y < rect.bottom) {
+            canvas.drawLine(cx - half, y - drop, cx + half, y + drop, thread)
+            canvas.drawLine(cx - half, y + drop, cx + half, y - drop, thread)
+            y += step
+        }
+    }
+
+    /** 活页：一列金属环 */
+    private fun drawRingSpine(canvas: Canvas, rect: RectF, cx: Float) {
+        val d = resources.displayMetrics.density
+        val step = 36f * d
+        val ringW = rect.width() * 0.74f
+        val ringH = 15f * d
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 2.1f * d
+        }
+        var y = rect.top + step * 0.5f
+        while (y < rect.bottom) {
+            p.shader = LinearGradient(
+                cx - ringW / 2f, 0f, cx + ringW / 2f, 0f,
+                intArrayOf(0xFFE2E4EA.toInt(), 0xFF9AA0AA.toInt(),
+                    0xFFF0F2F6.toInt(), 0xFF8E939B.toInt()),
+                floatArrayOf(0f, 0.35f, 0.62f, 1f), Shader.TileMode.CLAMP)
+            canvas.drawRoundRect(
+                RectF(cx - ringW / 2f, y - ringH / 2f, cx + ringW / 2f, y + ringH / 2f),
+                ringH / 2f, ringH / 2f, p)
+            y += step
+        }
+        p.shader = null
+    }
+
     override fun onDraw(canvas: Canvas) {
         val p = project ?: return
         if (slots.isEmpty()) layoutSlots()
@@ -313,6 +394,9 @@ class PageCanvas @JvmOverloads constructor(
                 s.rect.right + 3f, s.rect.bottom + 6f, shadow)
             PageRenderer.drawPageBackground(p, page, canvas, s.rect)
         }
+
+        // 书脊（双联摄影书）：在两页之间按全局设置呈现
+        if (spreadMode && p.type == Project.TYPE_BOOK) drawSpine(canvas, p)
 
         if (slots.isNotEmpty()) {
             val union = RectF(slots[0].rect)

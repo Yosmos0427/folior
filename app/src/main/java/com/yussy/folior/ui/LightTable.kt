@@ -17,6 +17,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.yussy.folior.model.Page
 import com.yussy.folior.model.Project
 import com.yussy.folior.model.heightMm
+import com.yussy.folior.model.renderSignature
 import com.yussy.folior.model.widthMm
 
 /**
@@ -280,7 +281,7 @@ class LightTable @JvmOverloads constructor(
         preloadThread = Thread {
             for (page in pages) {
                 if (Thread.currentThread().isInterrupted) return@Thread
-                val key = "${page.id}_${w}x$h"
+                val key = "${page.id}_${page.renderSignature(p)}_${w}x$h"
                 val bmp = try {
                     PageRenderer.renderThumb(context, p, page, w, h)
                 } catch (_: Throwable) {
@@ -383,7 +384,7 @@ class LightTable @JvmOverloads constructor(
 
             // tag 用于渲染队列的身份校验：View 复用时随之改变，旧任务自动失效
             holder.thumb.tag = page.id
-            val key = "${page.id}_${cellW}x${imgH}"
+            val key = "${page.id}_${page.renderSignature(p)}_${cellW}x${imgH}"
             val cached = thumbCache[key]
             if (cached != null) {
                 holder.thumb.setImageBitmap(cached)

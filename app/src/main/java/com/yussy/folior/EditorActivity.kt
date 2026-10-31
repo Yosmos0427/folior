@@ -19,6 +19,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.yussy.folior.model.*
+import com.yussy.folior.store.History
 import com.yussy.folior.store.Prefs
 import com.yussy.folior.store.Store
 import com.yussy.folior.ui.*
@@ -54,6 +55,19 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var expandBtn: TextView
     private var lightTableOpen = false
     private var pageIndex = 0
+    /** 最近一次生效的书脊样式，用于从设置页返回时判断是否需要重排工作区 */
+    private var lastSpineStyle = ""
+
+    // ---- 撤销 / 重做 ----
+    private val history = History()
+    private var undoBtn: TextView? = null
+    private var redoBtn: TextView? = null
+    /** 本次触摸（拖动/缩放/旋转）按下时的快照，用于把一连串变更合并成一步 */
+    private var gestureSnapshot: History.Snapshot? = null
+    private var gestureRecorded = false
+    /** 装裱面板打开时的快照，面板内连续调整为一步 */
+    private var framingSnapshot: History.Snapshot? = null
+    private var framingRecorded = false
     private var spread = false
     private lateinit var tools: LinearLayout
     private lateinit var drawBar: LinearLayout
@@ -102,9 +116,73 @@ class EditorActivity : AppCompatActivity() {
         project = p
         if (project.pages.isEmpty()) project.pages.add(Page())
         buildUi()
+        updateHistoryButtons()
     }
 
     private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
+
+    override fun onResume() {
+        super.onResume()
+        // 书脊样式在全局设置里改动：回到编辑器时重排工作区（不动缩放以外的状态）
+        val style = Prefs.spineStyle(this)
+        if (lastSpineStyle.isNotEmpty() && style != lastSpineStyle) {
+            canvas.invalidateLayout()
+        }
+        lastSpineStyle = style
+    }
+
+    // ---------------- 撤销 / 重做 ----------------
+
+    private fun snapshot() = History.Snapshot(project.toJson().toString(), pageIndex)
+
+    /** 记录一次操作前的状态（在操作执行前调用） */
+    private fun pushHistory() {
+        history.push(snapshot())
+        updateHistoryButtons()
+    }
+
+    private fun updateHistoryButtons() {
+        undoBtn?.alpha = if (history.canUndo) 1f else 0.22f
+        redoBtn?.alpha = if (history.canRedo) 1f else 0.22f
+    }
+
+    /**
+     * 非手势操作（按钮/对话框）：记录操作前状态，并占住本次 onModified，
+     * 避免同一次操作被记成两步。
+     */
+    private fun beginDiscreteChange() {
+        pushHistory()
+        gestureSnapshot = null
+        gestureRecorded = true
+    }
+
+    private fun undo() {
+        val s = history.undo(snapshot()) ?: return
+        restore(s)
+    }
+
+    private fun redo() {
+        val s = history.redo(snapshot()) ?: return
+        restore(s)
+    }
+
+    /** 用快照整份替换当前工程并刷新所有视图 */
+    private fun restore(s: History.Snapshot) {
+        val p = Project.fromJson(org.json.JSONObject(s.json))
+        if (p.pages.isEmpty()) p.pages.add(Page())
+        project = p
+        pageIndex = s.pageIndex.coerceIn(0, p.pages.size - 1)
+        canvas.select(null)
+        canvas.project = p
+        strip.project = p
+        lightTable.project = p
+        lightTable.stopPreload()
+        if (framingOpen) closeFraming()
+        applyOrientation()
+        refreshAll(scrollStrip = false)
+        scheduleSave()
+        updateHistoryButtons()
+    }
 
     private fun buildUi() {
         // 最外层 FrameLayout：看片台覆盖层与「展开」按钮需悬浮于整个编辑器之上
@@ -146,6 +224,24 @@ class EditorActivity : AppCompatActivity() {
             setPadding(dp(10f), 0, dp(10f), 0)
         }
         top.addView(pageLabel)
+
+        // 撤销 / 重做：页面标签右侧两个小箭头，无历史时淡显
+        undoBtn = TextView(this).apply {
+            text = "↶"
+            textSize = 17f
+            setTextColor(0xFF6B6B66.toInt())
+            setPadding(dp(2f), 0, dp(9f), 0)
+            setOnClickListener { undo() }
+        }
+        top.addView(undoBtn)
+        redoBtn = TextView(this).apply {
+            text = "↷"
+            textSize = 17f
+            setTextColor(0xFF6B6B66.toInt())
+            setPadding(0, 0, dp(6f), 0)
+            setOnClickListener { redo() }
+        }
+        top.addView(redoBtn)
         top.addView(TextView(this).apply {
             text = "菜单"
             textSize = 13f
@@ -211,6 +307,7 @@ class EditorActivity : AppCompatActivity() {
             val it = selected() ?: return@selBtn
             AlertDialog.Builder(this).setTitle("删除该元素？")
                 .setPositiveButton("删除") { _, _ ->
+                    beginDiscreteChange()
                     (pageOfItem(it) ?: page()).items.remove(it)
                     canvas.select(null)
                     canvas.invalidate()
@@ -231,7 +328,7 @@ class EditorActivity : AppCompatActivity() {
             openFraming(it)
         }
         // 5) 旋转（原「转90°」）
-        selBtn("旋转") { canvas.rotateSelected90() }
+        selBtn("旋转") { beginDiscreteChange(); canvas.rotateSelected90() }
         // 6) 下移
         selBtn("下移") { sendBack() }
         // 7) 置顶
@@ -250,7 +347,14 @@ class EditorActivity : AppCompatActivity() {
 
         // ---- 内联装裱面板（布局流内，不遮挡工作区；即时生效） ----
         framingPanel = FramingPanel(this).apply { visibility = View.GONE }
-        framingPanel.onChanged = { canvas.invalidate(); scheduleSave() }
+        framingPanel.onChanged = {
+            canvas.invalidate(); scheduleSave()
+            // 同一次打开面板内的连续调整合并为一步撤销
+            if (!framingRecorded) {
+                framingSnapshot?.let { history.push(it); updateHistoryButtons() }
+                framingRecorded = true
+            }
+        }
         framingPanel.onClosed = { closeFraming() }
         root.addView(framingPanel)
 
@@ -430,8 +534,19 @@ class EditorActivity : AppCompatActivity() {
         canvas.project = project
         canvas.onSelectionChanged = { updateBars() }
         // 点画布任意处 = 收起预览栏已固定的删除按钮
-        canvas.onTouchDown = { strip.hideReveal() }
-        canvas.onModified = { scheduleSave(); strip.refresh() }
+        canvas.onTouchDown = {
+            strip.hideReveal()
+            // 一次触摸内的所有变更（拖动/缩放/旋转）合并为一步撤销
+            gestureSnapshot = snapshot()
+            gestureRecorded = false
+        }
+        canvas.onModified = {
+            scheduleSave(); strip.refresh()
+            if (!gestureRecorded) {
+                gestureSnapshot?.let { history.push(it); updateHistoryButtons() }
+                gestureRecorded = true
+            }
+        }
         canvas.onFlip = { dir -> flipSpread(dir) }
         canvas.onEditText = { it -> editItem(it) }
         canvas.onDragTargetAt = { x, y -> strip.pageAt(x, y) }
@@ -446,6 +561,7 @@ class EditorActivity : AppCompatActivity() {
             canvas.invalidateLayout()
             updateBars()
         }
+        strip.onReorderStart = { beginDiscreteChange() }
         strip.onPageReordered = { idx ->
             pageIndex = idx.coerceIn(0, project.pages.size - 1)
             scheduleSave()
@@ -849,6 +965,7 @@ class EditorActivity : AppCompatActivity() {
                 Toast.LENGTH_SHORT).show()
             return
         }
+        beginDiscreteChange()
         project.pages.removeAt(pos)
         pageIndex = pageIndex.coerceIn(0, project.pages.size - 1)
         canvas.select(null)
@@ -863,6 +980,7 @@ class EditorActivity : AppCompatActivity() {
         if (isExh) {
             showWall(this, "新建墙体",
                 project.pageWmm, project.pageHmm, presets = WALL_PRESETS) { w, h, _ ->
+                beginDiscreteChange()
                 project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h))
                 pageIndex += 1
                 refreshAll()
@@ -871,6 +989,7 @@ class EditorActivity : AppCompatActivity() {
         } else {
             PageSizeDialog.show(this, "新建自定义页面尺寸",
                 project.pageWmm, project.pageHmm) { w, h, _ ->
+                beginDiscreteChange()
                 project.pages.add(pageIndex + 1, Page(wmm = w, hmm = h))
                 pageIndex += 1
                 refreshAll()
@@ -886,19 +1005,22 @@ class EditorActivity : AppCompatActivity() {
     private fun resizeCurrentPage() {
         val pg = page()
         val apply: (Float, Float, String?) -> Unit = { w, h, bg ->
+            beginDiscreteChange()
             pg.wmm = w; pg.hmm = h
-            if (bg != null) pg.bg = bg
+            pg.bg = bg          // null = 跟随项目设置
             canvas.invalidateLayout()
             strip.refresh()
             scheduleSave()
         }
-        val curBg = pg.bg ?: project.defaultBg
         if (project.type == Project.TYPE_EXHIBITION)
             showWall(this, "墙体设置", pg.widthMm(project), pg.heightMm(project),
-                presets = WALL_PRESETS, bg = curBg) { w, h, bg -> apply(w, h, bg) }
+                presets = WALL_PRESETS, projectBg = project.defaultBg, pageBg = pg.bg) { w, h, bg ->
+                apply(w, h, bg)
+            }
         else
             PageSizeDialog.show(this, "页面设置",
-                pg.widthMm(project), pg.heightMm(project), bg = curBg) { w, h, bg ->
+                pg.widthMm(project), pg.heightMm(project),
+                projectBg = project.defaultBg, pageBg = pg.bg) { w, h, bg ->
                 apply(w, h, bg)
             }
     }
@@ -965,6 +1087,7 @@ class EditorActivity : AppCompatActivity() {
             .setView(input)
             .setPositiveButton("确定") { _, _ ->
                 val cm = input.text.toString().toFloatOrNull() ?: return@setPositiveButton
+                beginDiscreteChange()
                 val newWmm = (cm * 10f).coerceIn(10f, 20000f)
                 val imgAspect = (item.w * ww) / (item.h * wh)
                 val newHmm = newWmm / imgAspect
@@ -1091,6 +1214,8 @@ class EditorActivity : AppCompatActivity() {
     /** 打开内联装裱面板：替换选择工具栏位置，调整即时生效。 */
     private fun openFraming(target: Item) {
         framingOpen = true
+        framingSnapshot = snapshot()
+        framingRecorded = false
         framingPanel.bind(target)
         framingPanel.visibility = View.VISIBLE
         updateBars()
@@ -1192,6 +1317,7 @@ class EditorActivity : AppCompatActivity() {
 
     private fun addPage() {
         // 空白页 = 项目设置的默认页面（尺寸与底色都跟随项目，不继承当前页）
+        beginDiscreteChange()
         project.pages.add(pageIndex + 1, Page())
         pageIndex += 1
         refreshAll()
@@ -1218,6 +1344,7 @@ class EditorActivity : AppCompatActivity() {
      */
     private fun duplicateCurrentPage() {
         val src = page()
+        beginDiscreteChange()
         val copy = Page.fromJson(src.toJson())
         copy.id = java.util.UUID.randomUUID().toString()
         copy.items.forEach { it.id = java.util.UUID.randomUUID().toString() }
@@ -1231,6 +1358,7 @@ class EditorActivity : AppCompatActivity() {
     private fun projectSettings() {
         ProjectDialog.show(this, true, project.title, project.type,
             project.pageWmm, project.pageHmm, project.defaultBg) { r ->
+            beginDiscreteChange()
             project.title = r.title
             project.type = r.type
             project.pageWmm = r.wmm
@@ -1270,6 +1398,7 @@ class EditorActivity : AppCompatActivity() {
 
     /** 处理相册返回：按用户选择的去向分流。 */
     private fun handlePickedPhotos(uris: List<Uri>) {
+        beginDiscreteChange()   // 整次导入算一步撤销
         val total = uris.size
         val progress = AlertDialog.Builder(this)
             .setTitle("正在导入")
@@ -1424,6 +1553,7 @@ class EditorActivity : AppCompatActivity() {
     private fun applyReplacement(uri: Uri) {
         val target = selected() ?: return
         if (target.type != Item.TYPE_PHOTO) return
+        beginDiscreteChange()
 
         // 记录替换前的锚点：页物理尺寸、原框、中心点
         val pageWmm = page().widthMm(project).coerceAtLeast(1f)
@@ -1473,6 +1603,7 @@ class EditorActivity : AppCompatActivity() {
         when (it.type) {
             Item.TYPE_TEXT -> TextDialog.show(this, it.text, it.fontScale, it.color,
                 it.bold, it.italic, it.align, it.vertical, it.lineHeight) { text, fs, color, bold, italic, align, vertical, lineHeight ->
+                beginDiscreteChange()
                 it.text = text; it.fontScale = fs; it.color = color
                 it.bold = bold; it.italic = italic; it.align = align
                 it.vertical = vertical; it.lineHeight = lineHeight
@@ -1482,6 +1613,7 @@ class EditorActivity : AppCompatActivity() {
             Item.TYPE_SHAPE -> {
                 AlertDialog.Builder(this)
                     .setItems(arrayOf("矩形", "横线", "圆形", "改颜色")) { _, which ->
+                        beginDiscreteChange()
                         when (which) {
                             0 -> it.shapeKind = "rect"
                             1 -> it.shapeKind = "line"
@@ -1496,6 +1628,7 @@ class EditorActivity : AppCompatActivity() {
 
     private fun duplicateSelected() {
         val it = selected() ?: return
+        beginDiscreteChange()
         val copy = it.copy(id = java.util.UUID.randomUUID().toString(),
             x = (it.x + 0.04f).coerceAtMost(1f - it.w), y = (it.y + 0.04f).coerceAtMost(1f - it.h))
         (pageOfItem(it) ?: page()).items.add(copy)
@@ -1506,6 +1639,7 @@ class EditorActivity : AppCompatActivity() {
 
     private fun bringTop() {
         val it = selected() ?: return
+        beginDiscreteChange()
         val items = (pageOfItem(it) ?: page()).items
         items.remove(it); items.add(it)
         canvas.invalidate(); scheduleSave()
@@ -1513,6 +1647,7 @@ class EditorActivity : AppCompatActivity() {
 
     private fun sendBack() {
         val it = selected() ?: return
+        beginDiscreteChange()
         val items = (pageOfItem(it) ?: page()).items
         val idx = items.indexOf(it)
         if (idx > 0) { items.removeAt(idx); items.add(idx - 1, it) }

@@ -87,6 +87,17 @@ data class Page(
 fun Page.widthMm(project: Project): Float = wmm ?: project.pageWmm
 fun Page.heightMm(project: Project): Float = hmm ?: project.pageHmm
 
+/**
+ * 页面渲染指纹：页面自身（元素、尺寸、页面色）+ 项目默认色。
+ * 缩略图缓存以它为 key 的一部分 —— 只有指纹变化（全局设置影响所有页、
+ * 页面设置/内容只影响本页）的页面才会重新渲染。
+ */
+fun Page.renderSignature(project: Project): Int {
+    var h = hashCode()                       // Page 为 data class，已覆盖全部字段与 items
+    h = 31 * h + project.defaultBg.hashCode()
+    return h
+}
+
 data class Item(
     var id: String = UUID.randomUUID().toString(),
     var type: String = TYPE_PHOTO,
