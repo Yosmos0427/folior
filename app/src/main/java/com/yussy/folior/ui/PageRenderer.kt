@@ -46,7 +46,8 @@ object PageRenderer {
     fun drawItems(
         ctx: Context, project: Project, page: Page,
         canvas: android.graphics.Canvas, rect: RectF,
-        highQuality: Boolean = false, pxHint: Int? = null
+        highQuality: Boolean = false, pxHint: Int? = null,
+        skipCrossing: Boolean = false
     ) {
         val isExhibition = project.type == Project.TYPE_EXHIBITION
         // 笔画始终在最底层（页面之上、所有展示物之下），不遮挡照片/文字
@@ -57,9 +58,56 @@ object PageRenderer {
         }
         for (item in page.items) {
             if (item.type == Item.TYPE_STROKE) continue
+            if (skipCrossing && item.crossesHorizontally()) continue
             drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
                 isExhibition, highQuality, pxHint)
         }
+    }
+
+    /**
+     * 跨页照片：横向越出页面边界的照片，以所在页的坐标系绘制，
+     * 由调用方裁切到「有页面的那一侧」区域。绘制顺序上它压过书脊，形成连续画面。
+     */
+    fun drawCrossingPhotos(
+        ctx: Context, project: Project, page: Page,
+        canvas: android.graphics.Canvas, rect: RectF,
+        highQuality: Boolean = false, pxHint: Int? = null
+    ) {
+        val isExhibition = project.type == Project.TYPE_EXHIBITION
+        for (item in page.items) {
+            if (!item.crossesHorizontally()) continue
+            drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
+                isExhibition, highQuality, pxHint)
+        }
+    }
+
+    /**
+     * 把相邻页的跨页照片按「物理尺寸」映射到本页坐标系绘制，
+     * 只保留落在本页内的部分 —— 于是超出页面边界的照片被单页边界切成两半，
+     * 各页各画自己那一半，并起来仍是一张连续画面。
+     *
+     * @param neighbor 相邻页（没有朝本页方向越界的照片时传 null）
+     * @param toRight  true = 邻页在本页右侧（它的左越界部分延伸进来）
+     */
+    fun drawSpillFrom(
+        ctx: Context, project: Project, neighbor: Page?, page: Page,
+        canvas: android.graphics.Canvas, rect: RectF,
+        toRight: Boolean
+    ) {
+        if (neighbor == null) return
+        // 只有真的朝本页方向越界时才补绘
+        val spills = if (toRight) neighbor.spillsLeft() else neighbor.spillsRight()
+        if (!spills) return
+        val kx = rect.width() / page.widthMm(project).coerceAtLeast(1f)
+        val nw = neighbor.widthMm(project) * kx
+        val nh = neighbor.heightMm(project) * kx
+        val top = rect.top + (rect.height() - nh) / 2f
+        val nRect = if (toRight) RectF(rect.right, top, rect.right + nw, top + nh)
+        else RectF(rect.left - nw, top, rect.left, top + nh)
+        val save = canvas.save()
+        canvas.clipRect(rect)
+        drawCrossingPhotos(ctx, project, neighbor, canvas, nRect, false, nw.toInt())
+        canvas.restoreToCount(save)
     }
 
     fun drawItem(
@@ -421,12 +469,27 @@ object PageRenderer {
         canvas.drawBitmap(bmp, null, RectF(dx, dy, dx + dw, dy + dh), p)
     }
 
-    /** 渲染整页到位图（缩略图用）。 */
-    fun renderThumb(ctx: Context, project: Project, page: Page, wPx: Int, hPx: Int): Bitmap {
+    /**
+     * 渲染整页到位图（缩略图用）。
+     * @param leftSpan  左侧相邻页：其中有跨页照片时，延伸进来的那一半会补绘在本页左边
+     * @param rightSpan 右侧相邻页：同上，补绘在本页右边
+     */
+    fun renderThumb(
+        ctx: Context, project: Project, page: Page, wPx: Int, hPx: Int,
+        leftSpan: Page? = null, rightSpan: Page? = null
+    ): Bitmap {
         val bmp = Bitmap.createBitmap(wPx.coerceAtLeast(1), hPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val c = android.graphics.Canvas(bmp)
-        c.drawColor(Color.WHITE)
-        drawPage(ctx, project, page, c, 0f, 0f, wPx.toFloat(), hPx.toFloat())
+        val rect = RectF(0f, 0f, wPx.toFloat(), hPx.toFloat())
+        drawPageBackground(project, page, c, rect)
+        // 跨页照片统一在最底层（与双联编辑区一致）：邻页延伸进来的 + 本页越界出去的
+        drawSpillFrom(ctx, project, leftSpan, page, c, rect, toRight = false)
+        drawSpillFrom(ctx, project, rightSpan, page, c, rect, toRight = true)
+        val save = c.save()
+        c.clipRect(rect)
+        drawCrossingPhotos(ctx, project, page, c, rect)
+        drawItems(ctx, project, page, c, rect, skipCrossing = true)
+        c.restoreToCount(save)
         return bmp
     }
 }

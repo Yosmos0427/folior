@@ -98,6 +98,32 @@ fun Page.renderSignature(project: Project): Int {
     return h
 }
 
+/**
+ * 照片是否横向越出页面边界。跨页只按几何判定——越界且那一侧有相邻页就延伸过去，
+ * 不依赖任何额外的开关状态（拉回页内即恢复单页）。
+ */
+fun Item.crossesHorizontally(): Boolean =
+    type == Item.TYPE_PHOTO && (x < -0.002f || x + w > 1.002f)
+
+/** 本页是否有照片向右侧越出（会被接到右邻页上） */
+fun Page.spillsRight(): Boolean =
+    items.any { it.crossesHorizontally() && it.x + it.w > 1.002f }
+
+/** 本页是否有照片向左侧越出（会被接到左邻页上） */
+fun Page.spillsLeft(): Boolean =
+    items.any { it.crossesHorizontally() && it.x < -0.002f }
+
+/**
+ * 摄影书页序：第 0 页为封面（单页，靠右）；此后奇数页在左、偶数页在右。
+ * 跨页只在同一对开的两页之间成立，因此「左邻 / 右邻」按对开规则确定，
+ * 而不是简单的 index ± 1。
+ */
+fun leftNeighborOf(index: Int): Int =
+    if (index >= 2 && index % 2 == 0) index - 1 else -1
+
+fun rightNeighborOf(index: Int, total: Int): Int =
+    if (index >= 1 && index % 2 == 1 && index + 1 < total) index + 1 else -1
+
 data class Item(
     var id: String = UUID.randomUUID().toString(),
     var type: String = TYPE_PHOTO,
@@ -122,6 +148,11 @@ data class Item(
     var matRatio: Float = 0f,          // 衬材宽高比，0=跟随内容
     /** 照片实际打印宽度（mm），用于展览墙体按真实比例摆放；null = 未指定 */
     var printMm: Float? = null,
+    /**
+     * 旧版跨页标记，仅供旧工程读取兼容；跨页现由几何位置判定（见 [crossesHorizontally]），
+     * 不再读写此字段。
+     */
+    var span: Boolean = false,
     // text
     var text: String = "",
     var fontScale: Float = 0.04f,    // 字号 = 页高的比例
@@ -181,6 +212,7 @@ data class Item(
             if (it.matStyle == null && !o.isNull("textBg"))  // 旧文字背景 → 衬材
                 it.matStyle = o.optString("textBg")
             it.printMm = if (o.isNull("printMm")) null else o.optDouble("printMm").toFloat()
+            it.span = o.optBoolean("span", false)
             it.text = o.optString("text", "")
             it.fontScale = o.optDouble("fontScale", 0.04).toFloat()
             it.color = o.optString("color", "#1A1A18")
@@ -222,6 +254,7 @@ data class Item(
         o.put("matPad", Math.min(matPadX, matPadY).toDouble())   // 旧版本兼容字段
         o.put("matRatio", matRatio.toDouble())
         o.put("printMm", printMm ?: JSONObject.NULL)
+        o.put("span", span)
         o.put("text", text)
         o.put("fontScale", fontScale.toDouble())
         o.put("color", color); o.put("bold", bold); o.put("italic", italic)
