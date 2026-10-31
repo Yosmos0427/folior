@@ -98,8 +98,20 @@ fun Page.renderSignature(project: Project): Int {
     return h
 }
 
-/** 本页是否有需要延伸到相邻页的照片 */
-fun Page.hasSpanPhoto(): Boolean = items.any { it.span && it.type == Item.TYPE_PHOTO }
+/**
+ * 照片是否横向越出页面边界。跨页只按几何判定——越界且那一侧有相邻页就延伸过去，
+ * 不依赖任何额外的开关状态（拉回页内即恢复单页）。
+ */
+fun Item.crossesHorizontally(): Boolean =
+    type == Item.TYPE_PHOTO && (x < -0.002f || x + w > 1.002f)
+
+/** 本页是否有照片向右侧越出（会被接到右邻页上） */
+fun Page.spillsRight(): Boolean =
+    items.any { it.crossesHorizontally() && it.x + it.w > 1.002f }
+
+/** 本页是否有照片向左侧越出（会被接到左邻页上） */
+fun Page.spillsLeft(): Boolean =
+    items.any { it.crossesHorizontally() && it.x < -0.002f }
 
 /**
  * 摄影书页序：第 0 页为封面（单页，靠右）；此后奇数页在左、偶数页在右。
@@ -137,8 +149,8 @@ data class Item(
     /** 照片实际打印宽度（mm），用于展览墙体按真实比例摆放；null = 未指定 */
     var printMm: Float? = null,
     /**
-     * 跨页照片：位于左页且向右侧延伸，超出本页的部分继续画到右页上（越过书脊）。
-     * 仅摄影书的双联视图/导出使用，其它情况按普通照片裁切。
+     * 旧版跨页标记，仅供旧工程读取兼容；跨页现由几何位置判定（见 [crossesHorizontally]），
+     * 不再读写此字段。
      */
     var span: Boolean = false,
     // text

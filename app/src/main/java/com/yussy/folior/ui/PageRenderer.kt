@@ -47,7 +47,7 @@ object PageRenderer {
         ctx: Context, project: Project, page: Page,
         canvas: android.graphics.Canvas, rect: RectF,
         highQuality: Boolean = false, pxHint: Int? = null,
-        skipSpan: Boolean = false
+        skipCrossing: Boolean = false
     ) {
         val isExhibition = project.type == Project.TYPE_EXHIBITION
         // 笔画始终在最底层（页面之上、所有展示物之下），不遮挡照片/文字
@@ -58,24 +58,24 @@ object PageRenderer {
         }
         for (item in page.items) {
             if (item.type == Item.TYPE_STROKE) continue
-            if (skipSpan && item.span) continue
+            if (skipCrossing && item.crossesHorizontally()) continue
             drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
                 isExhibition, highQuality, pxHint)
         }
     }
 
     /**
-     * 跨页照片：以所在页的坐标系绘制，可越过页面左右边界继续延伸，
+     * 跨页照片：横向越出页面边界的照片，以所在页的坐标系绘制，
      * 由调用方裁切到「有页面的那一侧」区域。绘制顺序上它压过书脊，形成连续画面。
      */
-    fun drawSpanPhotos(
+    fun drawCrossingPhotos(
         ctx: Context, project: Project, page: Page,
         canvas: android.graphics.Canvas, rect: RectF,
         highQuality: Boolean = false, pxHint: Int? = null
     ) {
         val isExhibition = project.type == Project.TYPE_EXHIBITION
         for (item in page.items) {
-            if (!item.span || item.type != Item.TYPE_PHOTO) continue
+            if (!item.crossesHorizontally()) continue
             drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
                 isExhibition, highQuality, pxHint)
         }
@@ -86,15 +86,18 @@ object PageRenderer {
      * 只保留落在本页内的部分 —— 于是超出页面边界的照片被单页边界切成两半，
      * 各页各画自己那一半，并起来仍是一张连续画面。
      *
-     * @param neighbor 相邻页（没有跨页照片时传 null）
-     * @param toRight  true = 邻页在本页右侧（它的左overflow延伸进来）
+     * @param neighbor 相邻页（没有朝本页方向越界的照片时传 null）
+     * @param toRight  true = 邻页在本页右侧（它的左越界部分延伸进来）
      */
     fun drawSpillFrom(
         ctx: Context, project: Project, neighbor: Page?, page: Page,
         canvas: android.graphics.Canvas, rect: RectF,
         toRight: Boolean
     ) {
-        if (neighbor == null || !neighbor.hasSpanPhoto()) return
+        if (neighbor == null) return
+        // 只有真的朝本页方向越界时才补绘
+        val spills = if (toRight) neighbor.spillsLeft() else neighbor.spillsRight()
+        if (!spills) return
         val kx = rect.width() / page.widthMm(project).coerceAtLeast(1f)
         val nw = neighbor.widthMm(project) * kx
         val nh = neighbor.heightMm(project) * kx
@@ -103,7 +106,7 @@ object PageRenderer {
         else RectF(rect.left - nw, top, rect.left, top + nh)
         val save = canvas.save()
         canvas.clipRect(rect)
-        drawSpanPhotos(ctx, project, neighbor, canvas, nRect, false, nw.toInt())
+        drawCrossingPhotos(ctx, project, neighbor, canvas, nRect, false, nw.toInt())
         canvas.restoreToCount(save)
     }
 
@@ -484,8 +487,8 @@ object PageRenderer {
         drawSpillFrom(ctx, project, rightSpan, page, c, rect, toRight = true)
         val save = c.save()
         c.clipRect(rect)
-        drawSpanPhotos(ctx, project, page, c, rect)
-        drawItems(ctx, project, page, c, rect, skipSpan = true)
+        drawCrossingPhotos(ctx, project, page, c, rect)
+        drawItems(ctx, project, page, c, rect, skipCrossing = true)
         c.restoreToCount(save)
         return bmp
     }

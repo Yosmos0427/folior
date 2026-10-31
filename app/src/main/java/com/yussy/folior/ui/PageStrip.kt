@@ -19,7 +19,8 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.yussy.folior.model.Project
-import com.yussy.folior.model.hasSpanPhoto
+import com.yussy.folior.model.spillsLeft
+import com.yussy.folior.model.spillsRight
 import com.yussy.folior.model.heightMm
 import com.yussy.folior.model.leftNeighborOf
 import com.yussy.folior.model.renderSignature
@@ -345,21 +346,24 @@ class PageStrip @JvmOverloads constructor(
             // 相邻页有跨页照片时，延伸过来的那一半要一起画进本页缩略图（左右双向）
             val li = leftNeighborOf(pos)
             val ri = rightNeighborOf(pos, p.pages.size)
-            val leftSpan = if (li >= 0) p.pages.getOrNull(li)?.takeIf { it.hasSpanPhoto() } else null
-            val rightSpan = if (ri >= 0) p.pages.getOrNull(ri)?.takeIf { it.hasSpanPhoto() } else null
+            val leftSpan = if (li >= 0) p.pages.getOrNull(li)?.takeIf { it.spillsRight() } else null
+            val rightSpan = if (ri >= 0) p.pages.getOrNull(ri)?.takeIf { it.spillsLeft() } else null
 
             val key = "${page.id}_${page.renderSignature(p)}_" +
                 "${leftSpan?.renderSignature(p) ?: 0}_${rightSpan?.renderSignature(p) ?: 0}_${w}x$h"
             val cached = thumbCache[key]
+            // tag 作为身份标记：重绑定/复用后旧任务自动失效（比 position 可靠，
+            // notifyDataSetChanged 之后 position 可能尚未稳定）
+            holder.thumb.tag = page.id
             if (cached != null) {
                 holder.thumb.setImageBitmap(cached)
             } else {
                 holder.thumb.setImageBitmap(null)
                 holder.thumb.post {
-                    if (project === p && p.pages.getOrNull(holder.bindingAdapterPosition) === page) {
+                    if (project === p && holder.thumb.tag == page.id) {
                         val bmp = PageRenderer.renderThumb(context, p, page, w, h, leftSpan, rightSpan)
                         thumbCache[key] = bmp
-                        holder.thumb.setImageBitmap(bmp)
+                        if (holder.thumb.tag == page.id) holder.thumb.setImageBitmap(bmp)
                     }
                 }
             }

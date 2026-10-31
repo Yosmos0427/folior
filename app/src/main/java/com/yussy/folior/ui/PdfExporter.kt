@@ -9,7 +9,8 @@ import android.graphics.RectF
 import com.yussy.folior.model.Item
 import com.yussy.folior.model.Page
 import com.yussy.folior.model.Project
-import com.yussy.folior.model.hasSpanPhoto
+import com.yussy.folior.model.spillsLeft
+import com.yussy.folior.model.spillsRight
 import com.yussy.folior.model.leftNeighborOf
 import com.yussy.folior.model.parseColor
 import com.yussy.folior.model.rightNeighborOf
@@ -175,8 +176,8 @@ object PdfExporter {
                 // 相邻页有跨页照片时，延伸过来的那一半要补在本页上。
                 val li = leftNeighborOf(i)
                 val ri = rightNeighborOf(i, project.pages.size)
-                val left = if (li >= 0) project.pages.getOrNull(li)?.takeIf { it.hasSpanPhoto() } else null
-                val right = if (ri >= 0) project.pages.getOrNull(ri)?.takeIf { it.hasSpanPhoto() } else null
+                val left = if (li >= 0) project.pages.getOrNull(li)?.takeIf { it.spillsRight() } else null
+                val right = if (ri >= 0) project.pages.getOrNull(ri)?.takeIf { it.spillsLeft() } else null
                 list.add(Spec.Single(pg, left, right))
             }
         }
@@ -304,8 +305,8 @@ object PdfExporter {
                 // 跨页照片统一在最底层：邻页延伸进来的 + 本页越界出去的
                 PageRenderer.drawSpillFrom(ctx, project, spec.left, spec.page, c, pr, toRight = false)
                 PageRenderer.drawSpillFrom(ctx, project, spec.right, spec.page, c, pr, toRight = true)
-                PageRenderer.drawSpanPhotos(ctx, project, spec.page, c, pr, true, pw)
-                PageRenderer.drawItems(ctx, project, spec.page, c, pr, true, pw, skipSpan = true)
+                PageRenderer.drawCrossingPhotos(ctx, project, spec.page, c, pr, true, pw)
+                PageRenderer.drawItems(ctx, project, spec.page, c, pr, true, pw, skipCrossing = true)
                 c.restoreToCount(save)
             }
             is Spec.Spread -> {
@@ -325,16 +326,16 @@ object PdfExporter {
                 c.clipRect(0f, 0f, pw.toFloat(), ph.toFloat())
                 // 跨页照片先画：压过中缝，成为一张连续画面；左右两页都可能向外延伸
                 spec.l?.let {
-                    PageRenderer.drawSpanPhotos(ctx, project, it, c, leftRect, true, (wl * kx).toInt())
+                    PageRenderer.drawCrossingPhotos(ctx, project, it, c, leftRect, true, (wl * kx).toInt())
                 }
                 spec.r?.let {
-                    PageRenderer.drawSpanPhotos(ctx, project, it, c, rightRect, true, (wr * kx).toInt())
+                    PageRenderer.drawCrossingPhotos(ctx, project, it, c, rightRect, true, (wr * kx).toInt())
                 }
                 spec.l?.let {
-                    PageRenderer.drawItems(ctx, project, it, c, leftRect, true, (wl * kx).toInt(), skipSpan = true)
+                    PageRenderer.drawItems(ctx, project, it, c, leftRect, true, (wl * kx).toInt(), skipCrossing = true)
                 }
                 spec.r?.let {
-                    PageRenderer.drawItems(ctx, project, it, c, rightRect, true, (wr * kx).toInt(), skipSpan = true)
+                    PageRenderer.drawItems(ctx, project, it, c, rightRect, true, (wr * kx).toInt(), skipCrossing = true)
                 }
                 c.restore()
             }

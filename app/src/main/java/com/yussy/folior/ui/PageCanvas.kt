@@ -222,23 +222,6 @@ class PageCanvas @JvmOverloads constructor(
         return slots.firstOrNull { it.index >= 0 && project?.pages?.getOrNull(it.index) === owner }
     }
 
-    /**
-     * 跨页判定（双联摄影书）：照片越出页面边界，且那一侧确实有相邻页时，
-     * 就视为跨页 —— 超出的部分接着画到相邻页上；拉回页内则恢复普通照片。
-     * 左右双向对称：左页照片可向右跨，右页照片可向左跨。
-     */
-    private fun updateSpanFlag(item: Item) {
-        // 非双联视图不做跨页判定，但也不清掉已有状态（避免竖屏微调一次就丢跨页）
-        if (!spreadMode || project?.type != Project.TYPE_BOOK) return
-        if (item.type != Item.TYPE_PHOTO) return
-        val slot = slotOf(item) ?: return
-        val hasLeft = slots.any { it.index != slot.index && it.rect.right <= slot.rect.left + 0.5f }
-        val hasRight = slots.any { it.index != slot.index && it.rect.left >= slot.rect.right - 0.5f }
-        val spillsLeft = item.x < -0.002f
-        val spillsRight = item.x + item.w > 1.002f
-        item.span = (spillsLeft && hasLeft) || (spillsRight && hasRight)
-    }
-
     fun select(item: Item?) {
         selected = item
         if (item != null) {
@@ -438,10 +421,11 @@ class PageCanvas @JvmOverloads constructor(
 
             // 墙外延伸预览（默认开启）：把超出页面的画面以半透明"幽灵"画在墙面之外，
             // 便于判断被裁掉的内容；墙面内仍按正常不透明度渲染。
-            // 跨页照片不算溢出——它本来就该延伸到另一页。
+            // 双联时横向越界的照片是跨页，不算溢出。
+            val canCross = spreadMode && slots.size == 2 && p.type == Project.TYPE_BOOK
             val hasOverflow = slots.any { s ->
                 p.pages.getOrNull(s.index)?.items?.any {
-                    if (spreadMode && it.span) false
+                    if (canCross && it.crossesHorizontally()) false
                     else it.x < -0.001f || it.y < -0.001f ||
                         it.x + it.w > 1.001f || it.y + it.h > 1.001f
                 } == true
@@ -456,32 +440,30 @@ class PageCanvas @JvmOverloads constructor(
                 canvas.clipRect(ghostArea)
                 for (s in slots) {
                     val pg = p.pages.getOrNull(s.index) ?: continue
-                    PageRenderer.drawItems(context, p, pg, canvas, s.rect,
-                        skipSpan = spreadMode && slots.size == 2 && p.type == Project.TYPE_BOOK)
+                    PageRenderer.drawItems(context, p, pg, canvas, s.rect, skipCrossing = canCross)
                 }
                 canvas.restoreToCount(layer)
             }
 
-            // 跨页照片：以所在页为坐标系绘制，可向左右任一方向越过书脊，
-            // 裁到「双页合围」区域 —— 哪个方向有页面，超出部分就落在那一页上
-            if (spreadMode && slots.size == 2 && p.type == Project.TYPE_BOOK) {
+            // 跨页照片：横向越界的照片以所在页为坐标系绘制，裁到「双页合围」区域 ——
+            // 哪个方向有页面，超出部分就画到那一页上（左右对称，纯几何判定）
+            if (canCross) {
                 canvas.save()
                 canvas.clipRect(union)
                 for (s in slots) {
                     val pg = p.pages.getOrNull(s.index) ?: continue
-                    PageRenderer.drawSpanPhotos(context, p, pg, canvas, s.rect)
+                    PageRenderer.drawCrossingPhotos(context, p, pg, canvas, s.rect)
                 }
                 canvas.restore()
             }
 
             // 内容：逐页裁到各自页面内——普通元素越界即被裁掉（越界部分另有浅色预览），
             // 跨页照片已在上一层单独绘制
-            val spansDrawn = spreadMode && slots.size == 2 && p.type == Project.TYPE_BOOK
             for (s in slots) {
                 val page = p.pages.getOrNull(s.index) ?: continue
                 canvas.save()
                 canvas.clipRect(s.rect)
-                PageRenderer.drawItems(context, p, page, canvas, s.rect, skipSpan = spansDrawn)
+                PageRenderer.drawItems(context, p, page, canvas, s.rect, skipCrossing = canCross)
                 canvas.restore()
             }
 
@@ -952,7 +934,6 @@ class PageCanvas @JvmOverloads constructor(
                     if (it.printMm != null && multiInitialPrintMm > 0f)
                         it.printMm = multiInitialPrintMm * scale
                     it.rotation = snapAngle(multiInitialRot + deltaAngle)
-                    updateSpanFlag(it)
                     invalidate()
                 } else if (dragging && selected != null) {
                     val it = selected!!
@@ -960,7 +941,6 @@ class PageCanvas @JvmOverloads constructor(
                     it.x += (ev.x - lastTouch.x) / slot.rect.width()
                     it.y += (ev.y - lastTouch.y) / slot.rect.height()
                     applySnap(it)
-                    updateSpanFlag(it)
                     invalidate()
                 }
                 if (dragging) updateDropTarget(rawX, rawY)
@@ -1002,7 +982,6 @@ class PageCanvas @JvmOverloads constructor(
                 }
                 dropTargetIdx = -1
                 onStripHighlight?.invoke(-1)
-                selected?.let { updateSpanFlag(it) }   // 缩放/旋转后重新判定是否跨页
                 if (multiActive || dragging) onModified?.invoke()
                 val dx = ev.x - emptyDownX
                 val dy = ev.y - emptyDownY
@@ -1189,7 +1168,6 @@ class PageCanvas @JvmOverloads constructor(
         // 中心保持
         it.x = cxN - it.w / 2f
         it.y = cyN - it.h / 2f
-        updateSpanFlag(it)          // 放大后越界即跨页
         invalidate()
     }
 

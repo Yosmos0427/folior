@@ -7,7 +7,8 @@ import android.graphics.Color
 import android.graphics.Paint
 import com.yussy.folior.model.Page
 import com.yussy.folior.model.Project
-import com.yussy.folior.model.hasSpanPhoto
+import com.yussy.folior.model.spillsLeft
+import com.yussy.folior.model.spillsRight
 import com.yussy.folior.model.heightMm
 import com.yussy.folior.model.leftNeighborOf
 import com.yussy.folior.model.rightNeighborOf
@@ -123,8 +124,8 @@ object ProjectPreview {
                 val idx = slot - lead
                 val li = leftNeighborOf(idx)
                 val ri = rightNeighborOf(idx, pages.size)
-                val leftSpan = if (li >= 0) pages.getOrNull(li)?.takeIf { it.hasSpanPhoto() } else null
-                val rightSpan = if (ri >= 0) pages.getOrNull(ri)?.takeIf { it.hasSpanPhoto() } else null
+                val leftSpan = if (li >= 0) pages.getOrNull(li)?.takeIf { it.spillsRight() } else null
+                val rightSpan = if (ri >= 0) pages.getOrNull(ri)?.takeIf { it.spillsLeft() } else null
                 val thumb = PageRenderer.renderThumb(ctx, project, page, cw, ch, leftSpan, rightSpan)
                 c.drawBitmap(thumb, x, oy, null)
                 thumb.recycle()

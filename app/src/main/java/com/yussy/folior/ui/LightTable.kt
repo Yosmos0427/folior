@@ -16,7 +16,8 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.yussy.folior.model.Page
 import com.yussy.folior.model.Project
-import com.yussy.folior.model.hasSpanPhoto
+import com.yussy.folior.model.spillsLeft
+import com.yussy.folior.model.spillsRight
 import com.yussy.folior.model.heightMm
 import com.yussy.folior.model.leftNeighborOf
 import com.yussy.folior.model.renderSignature
@@ -288,8 +289,8 @@ class LightTable @JvmOverloads constructor(
                 if (Thread.currentThread().isInterrupted) return@Thread
                 val li = leftNeighborOf(idx)
                 val ri = rightNeighborOf(idx, pages.size)
-                val leftSpan = if (li >= 0) pages.getOrNull(li)?.takeIf { it.hasSpanPhoto() } else null
-                val rightSpan = if (ri >= 0) pages.getOrNull(ri)?.takeIf { it.hasSpanPhoto() } else null
+                val leftSpan = if (li >= 0) pages.getOrNull(li)?.takeIf { it.spillsRight() } else null
+                val rightSpan = if (ri >= 0) pages.getOrNull(ri)?.takeIf { it.spillsLeft() } else null
                 val key = "${page.id}_${page.renderSignature(p)}_" +
                     "${leftSpan?.renderSignature(p) ?: 0}_${rightSpan?.renderSignature(p) ?: 0}_${w}x$h"
                 val bmp = try {
@@ -397,8 +398,8 @@ class LightTable @JvmOverloads constructor(
             // 相邻页有跨页照片时，本页格子里要一起画出延伸过来的那一半
             val li = leftNeighborOf(pos)
             val ri = rightNeighborOf(pos, p.pages.size)
-            val leftSpan = if (li >= 0) p.pages.getOrNull(li)?.takeIf { it.hasSpanPhoto() } else null
-            val rightSpan = if (ri >= 0) p.pages.getOrNull(ri)?.takeIf { it.hasSpanPhoto() } else null
+            val leftSpan = if (li >= 0) p.pages.getOrNull(li)?.takeIf { it.spillsRight() } else null
+            val rightSpan = if (ri >= 0) p.pages.getOrNull(ri)?.takeIf { it.spillsLeft() } else null
             val key = "${page.id}_${page.renderSignature(p)}_" +
                 "${leftSpan?.renderSignature(p) ?: 0}_${rightSpan?.renderSignature(p) ?: 0}_${cellW}x${imgH}"
             val cached = thumbCache[key]
