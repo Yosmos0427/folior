@@ -46,7 +46,8 @@ object PageRenderer {
     fun drawItems(
         ctx: Context, project: Project, page: Page,
         canvas: android.graphics.Canvas, rect: RectF,
-        highQuality: Boolean = false, pxHint: Int? = null
+        highQuality: Boolean = false, pxHint: Int? = null,
+        skipSpan: Boolean = false
     ) {
         val isExhibition = project.type == Project.TYPE_EXHIBITION
         // 笔画始终在最底层（页面之上、所有展示物之下），不遮挡照片/文字
@@ -57,6 +58,24 @@ object PageRenderer {
         }
         for (item in page.items) {
             if (item.type == Item.TYPE_STROKE) continue
+            if (skipSpan && item.span) continue
+            drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
+                isExhibition, highQuality, pxHint)
+        }
+    }
+
+    /**
+     * 跨页照片：以所在页的坐标系绘制，宽度越过页面右边界继续延伸，
+     * 由调用方裁切到「双页合围」区域。绘制顺序上它压过书脊，形成连续画面。
+     */
+    fun drawSpanPhotos(
+        ctx: Context, project: Project, page: Page,
+        canvas: android.graphics.Canvas, rect: RectF,
+        highQuality: Boolean = false, pxHint: Int? = null
+    ) {
+        val isExhibition = project.type == Project.TYPE_EXHIBITION
+        for (item in page.items) {
+            if (!item.span || item.type != Item.TYPE_PHOTO) continue
             drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
                 isExhibition, highQuality, pxHint)
         }
@@ -421,12 +440,29 @@ object PageRenderer {
         canvas.drawBitmap(bmp, null, RectF(dx, dy, dx + dw, dy + dh), p)
     }
 
-    /** 渲染整页到位图（缩略图用）。 */
-    fun renderThumb(ctx: Context, project: Project, page: Page, wPx: Int, hPx: Int): Bitmap {
+    /**
+     * 渲染整页到位图（缩略图用）。
+     * @param prevSpan 右页的缩略图传入左侧前页：该页的跨页照片会延伸补绘到本页左侧
+     */
+    fun renderThumb(
+        ctx: Context, project: Project, page: Page, wPx: Int, hPx: Int,
+        prevSpan: Page? = null
+    ): Bitmap {
         val bmp = Bitmap.createBitmap(wPx.coerceAtLeast(1), hPx.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val c = android.graphics.Canvas(bmp)
-        c.drawColor(Color.WHITE)
-        drawPage(ctx, project, page, c, 0f, 0f, wPx.toFloat(), hPx.toFloat())
+        val rect = RectF(0f, 0f, wPx.toFloat(), hPx.toFloat())
+        drawPageBackground(project, page, c, rect)
+        if (prevSpan != null) {
+            val prevW = prevSpan.widthMm(project) / page.widthMm(project).coerceAtLeast(1f) * wPx
+            c.save()
+            c.clipRect(rect)
+            drawSpanPhotos(ctx, project, prevSpan, c, RectF(-prevW, 0f, 0f, hPx.toFloat()))
+            c.restore()
+        }
+        c.save()
+        c.clipRect(rect)
+        drawItems(ctx, project, page, c, rect)
+        c.restore()
         return bmp
     }
 }

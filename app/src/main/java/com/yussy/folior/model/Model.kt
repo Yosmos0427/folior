@@ -122,6 +122,11 @@ data class Item(
     var matRatio: Float = 0f,          // 衬材宽高比，0=跟随内容
     /** 照片实际打印宽度（mm），用于展览墙体按真实比例摆放；null = 未指定 */
     var printMm: Float? = null,
+    /**
+     * 跨页照片：位于左页且向右侧延伸，超出本页的部分继续画到右页上（越过书脊）。
+     * 仅摄影书的双联视图/导出使用，其它情况按普通照片裁切。
+     */
+    var span: Boolean = false,
     // text
     var text: String = "",
     var fontScale: Float = 0.04f,    // 字号 = 页高的比例
@@ -181,6 +186,7 @@ data class Item(
             if (it.matStyle == null && !o.isNull("textBg"))  // 旧文字背景 → 衬材
                 it.matStyle = o.optString("textBg")
             it.printMm = if (o.isNull("printMm")) null else o.optDouble("printMm").toFloat()
+            it.span = o.optBoolean("span", false)
             it.text = o.optString("text", "")
             it.fontScale = o.optDouble("fontScale", 0.04).toFloat()
             it.color = o.optString("color", "#1A1A18")
@@ -222,6 +228,7 @@ data class Item(
         o.put("matPad", Math.min(matPadX, matPadY).toDouble())   // 旧版本兼容字段
         o.put("matRatio", matRatio.toDouble())
         o.put("printMm", printMm ?: JSONObject.NULL)
+        o.put("span", span)
         o.put("text", text)
         o.put("fontScale", fontScale.toDouble())
         o.put("color", color); o.put("bold", bold); o.put("italic", italic)

@@ -222,6 +222,17 @@ class PageCanvas @JvmOverloads constructor(
         return slots.firstOrNull { it.index >= 0 && project?.pages?.getOrNull(it.index) === owner }
     }
 
+    /**
+     * 跨页判定（双联摄影书）：左页的照片向右越出页面边界即视为跨页，
+     * 超出部分接着画到右页、压过书脊；拉回页内则恢复普通照片。
+     */
+    private fun updateSpanFlag(item: Item) {
+        if (!spreadMode || project?.type != Project.TYPE_BOOK) return
+        if (item.type != Item.TYPE_PHOTO) return
+        val slot = slotOf(item) ?: return
+        item.span = slot.index == leftIndex && rightIndex >= 0 && (item.x + item.w) > 1.002f
+    }
+
     fun select(item: Item?) {
         selected = item
         if (item != null) {
@@ -404,9 +415,11 @@ class PageCanvas @JvmOverloads constructor(
 
             // 墙外延伸预览（默认开启）：把超出页面的画面以半透明"幽灵"画在墙面之外，
             // 便于判断被裁掉的内容；墙面内仍按正常不透明度渲染。
+            // 跨页照片不算溢出——它本来就该延伸到另一页。
             val hasOverflow = slots.any { s ->
                 p.pages.getOrNull(s.index)?.items?.any {
-                    it.x < -0.001f || it.y < -0.001f ||
+                    if (spreadMode && it.span) false
+                    else it.x < -0.001f || it.y < -0.001f ||
                         it.x + it.w > 1.001f || it.y + it.h > 1.001f
                 } == true
             }
@@ -420,17 +433,30 @@ class PageCanvas @JvmOverloads constructor(
                 canvas.clipRect(ghostArea)
                 for (s in slots) {
                     val pg = p.pages.getOrNull(s.index) ?: continue
-                    PageRenderer.drawItems(context, p, pg, canvas, s.rect)
+                    PageRenderer.drawItems(context, p, pg, canvas, s.rect,
+                        skipSpan = spreadMode && slots.size == 2 && p.type == Project.TYPE_BOOK)
                 }
                 canvas.restoreToCount(layer)
             }
 
-            // 内容：裁切到"双页合围"区域，墙面内正常渲染
+            // 跨页照片：以所在页（左页）为坐标系延伸，裁到双页合围区域，压过书脊成连续画面
+            if (spreadMode && slots.size == 2 && p.type == Project.TYPE_BOOK) {
+                canvas.save()
+                canvas.clipRect(union)
+                for (s in slots) {
+                    val pg = p.pages.getOrNull(s.index) ?: continue
+                    PageRenderer.drawSpanPhotos(context, p, pg, canvas, s.rect)
+                }
+                canvas.restore()
+            }
+
+            // 内容：裁切到"双页合围"区域，墙面内正常渲染；跨页照片已在上一层单独绘制
+            val spansDrawn = spreadMode && slots.size == 2 && p.type == Project.TYPE_BOOK
             canvas.save()
             canvas.clipRect(union)
             for (s in slots) {
                 val page = p.pages.getOrNull(s.index) ?: continue
-                PageRenderer.drawItems(context, p, page, canvas, s.rect)
+                PageRenderer.drawItems(context, p, page, canvas, s.rect, skipSpan = spansDrawn)
             }
             canvas.restore()
         }
@@ -904,6 +930,7 @@ class PageCanvas @JvmOverloads constructor(
                     it.x += (ev.x - lastTouch.x) / slot.rect.width()
                     it.y += (ev.y - lastTouch.y) / slot.rect.height()
                     applySnap(it)
+                    updateSpanFlag(it)
                     invalidate()
                 }
                 if (dragging) updateDropTarget(rawX, rawY)
@@ -945,6 +972,7 @@ class PageCanvas @JvmOverloads constructor(
                 }
                 dropTargetIdx = -1
                 onStripHighlight?.invoke(-1)
+                selected?.let { updateSpanFlag(it) }   // 缩放/旋转后重新判定是否跨页
                 if (multiActive || dragging) onModified?.invoke()
                 val dx = ev.x - emptyDownX
                 val dy = ev.y - emptyDownY

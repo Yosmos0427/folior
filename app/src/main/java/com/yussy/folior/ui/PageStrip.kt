@@ -339,7 +339,15 @@ class PageStrip @JvmOverloads constructor(
             holder.thumb.layoutParams = LinearLayout.LayoutParams(
                 w.coerceAtLeast(8), h.coerceAtLeast(8))
 
-            val key = "${page.id}_${page.renderSignature(p)}_${w}x$h"
+            // 右页（偶数索引且非封面）若左邻页有跨页照片，缩略图要把延伸过来的部分一起画
+            val prevSpan = if (pos > 1 && pos % 2 == 0) {
+                p.pages.getOrNull(pos - 1)?.takeIf { pg ->
+                    pg.items.any { it.span && it.type == "photo" }
+                }
+            } else null
+
+            val key = "${page.id}_${page.renderSignature(p)}_" +
+                "${prevSpan?.renderSignature(p) ?: 0}_${w}x$h"
             val cached = thumbCache[key]
             if (cached != null) {
                 holder.thumb.setImageBitmap(cached)
@@ -347,7 +355,7 @@ class PageStrip @JvmOverloads constructor(
                 holder.thumb.setImageBitmap(null)
                 holder.thumb.post {
                     if (project === p && p.pages.getOrNull(holder.bindingAdapterPosition) === page) {
-                        val bmp = PageRenderer.renderThumb(context, p, page, w, h)
+                        val bmp = PageRenderer.renderThumb(context, p, page, w, h, prevSpan)
                         thumbCache[key] = bmp
                         holder.thumb.setImageBitmap(bmp)
                     }
