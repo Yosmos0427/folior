@@ -16,7 +16,9 @@ data class Project(
     var pageWmm: Float = 210f,
     var pageHmm: Float = 297f,
     var defaultBg: String = "#FFFFFF",
-    var pages: MutableList<Page> = mutableListOf()
+    var pages: MutableList<Page> = mutableListOf(),
+    /** 指示线：贯穿工作区的构图参考线，项目级共享（翻页不变） */
+    var guides: MutableList<Guide> = mutableListOf()
 ) {
     companion object {
         const val TYPE_BOOK = "book"
@@ -33,6 +35,14 @@ data class Project(
             )
             val arr = o.optJSONArray("pages") ?: JSONArray()
             for (i in 0 until arr.length()) p.pages.add(Page.fromJson(arr.getJSONObject(i)))
+            val gs = o.optJSONArray("guides")
+            if (gs != null) for (i in 0 until gs.length()) {
+                val g = gs.optJSONObject(i) ?: continue
+                p.guides.add(Guide(
+                    angle = g.optDouble("a", 0.0).toFloat(),
+                    axMm = g.optDouble("x", 0.0).toFloat(),
+                    ayMm = g.optDouble("y", 0.0).toFloat()))
+            }
             return p
         }
     }
@@ -46,6 +56,15 @@ data class Project(
         val arr = JSONArray()
         pages.forEach { arr.put(it.toJson()) }
         o.put("pages", arr)
+        val gs = JSONArray()
+        guides.forEach { g ->
+            gs.put(JSONObject().apply {
+                put("a", g.angle.toDouble())
+                put("x", g.axMm.toDouble())
+                put("y", g.ayMm.toDouble())
+            })
+        }
+        o.put("guides", gs)
         return o
     }
 
@@ -82,6 +101,18 @@ data class Page(
         return o
     }
 }
+
+/**
+ * 指示线：一条贯穿工作区的直线，只作构图参考，不参与 PDF / 预览输出。
+ *
+ * 以「角度 + 锚点」定义——旋转绕锚点，平移沿法线移动锚点。
+ * 锚点用 mm 存（相对内容中心），于是缩放、换页、不同设备上位置一致。
+ */
+data class Guide(
+    var angle: Float = 0f,     // 度，0 = 水平，归一到 (-90, 90]
+    var axMm: Float = 0f,      // 锚点相对内容中心的横向偏移
+    var ayMm: Float = 0f       // 纵向偏移
+)
 
 /** 页面实际宽高（mm）：页级覆盖优先，回退项目默认 */
 fun Page.widthMm(project: Project): Float = wmm ?: project.pageWmm

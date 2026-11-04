@@ -12,16 +12,20 @@ import com.yussy.folior.store.Prefs
 import com.yussy.folior.store.Store
 import kotlin.math.*
 
+/** 吸附容差（屏幕 dp）：与缩放、页面尺寸无关，手感才稳定。 */
+private const val SNAP_TOL_DP = 8f
+
 /**
  * 页面编辑画布（支持单页 / 跨页两种模式）。
  *
  * 手势：
  * - 单指点按：选中 / 取消选中
- * - 单指拖动：移动选中项（中线/三分线吸附）
- * - 双指：缩放 + 旋转（自动吸附 0/90/180/270）
- * - 长按拖动：调整同页内层级顺序
+ * - 单指拖动：移动（边 / 中心 / 等距 / 指示线，容差固定 8dp 屏幕）
+ * - 长按：加选 / 减选（多选后可整体拖动、对齐、分布）
+ * - 双指：缩放 + 旋转（吸附 0/90/180/270，并与指示线平行）
  * - 双击照片：裁切
  * - 空白处左右滑动：翻跨页
+ * - 指示线模式：拖线体平移、拖两端旋转（吸附 0/30/45/60/90）
  *
  * 跨页模式（横屏摄影书）：左页/右页并排显示，元素坐标可越出本页边界实现跨页展示。
  */
@@ -62,11 +66,35 @@ class PageCanvas @JvmOverloads constructor(
     var selected: Item? = null
         private set
 
+    /** 当前选择集合（含 [selected]），多选时顺序即加入顺序。**只能是同一页的元素。** */
+    private val selList = ArrayList<Item>()
+    val selection: List<Item> get() = selList
+    val multiCount: Int get() = selList.size
+
     private var dragging = false
     private var resizing = false
     private var reordering = false
     private var reorderIndex = -1
     private val lastTouch = PointF()
+
+    // ---------------- 拖动：raw（手指）与显示分离 ----------------
+    // 吸附绝不能改写拖动基准，否则手指继续拖也拖不走（旧实现正是这个毛病）。
+    private var dragRawDx = 0f
+    private var dragRawDy = 0f
+    private val dragOriginX = ArrayList<Float>()
+    private val dragOriginY = ArrayList<Float>()
+
+    // 吸附结果与"拖走"状态
+    private var snapV: AxisSnapper.Hit? = null
+    private var snapH: AxisSnapper.Hit? = null
+    private var stuckVKind: SnapKind? = null
+    private var stuckVValue = 0f
+    private var stuckVRaw = 0f
+    private var stuckHKind: SnapKind? = null
+    private var stuckHValue = 0f
+    private var stuckHRaw = 0f
+    private var coolVUntil = 0L
+    private var coolHUntil = 0L
 
     // 双指
     private var multiInitialDist = 0f
@@ -79,9 +107,27 @@ class PageCanvas @JvmOverloads constructor(
     private var multiInitialRot = 0f
     private var multiActive = false
 
-    // 吸附
-    private var guideV = -1f
-    private var guideH = -1f
+    // ---------------- 指示线（贯穿工作区的构图参考线） ----------------
+
+    /** 指示线模式：进入后只操作线，元素不可选，避免挥手就误选 */
+    var guideMode = false
+        set(v) {
+            if (field == v) return
+            field = v
+            if (!v) activeGuide = null
+            invalidate()
+        }
+
+    /** 指示线被增删改后回调（Activity 据此存盘/记撤销） */
+    var onGuidesChanged: (() -> Unit)? = null
+
+    /** 开始拖动指示线：Activity 借此记录操作前快照 */
+    var onGuideEditStart: (() -> Unit)? = null
+
+    private var activeGuide: Guide? = null
+    private var guideDragMode = 0          // 0=无 1=平移 2=旋转
+    private var guideStartOffset = 0f
+    private var guideStartAngle = 0f
 
 
     // 空白滑动翻页
@@ -183,14 +229,13 @@ class PageCanvas @JvmOverloads constructor(
 
         override fun onLongPress(e: MotionEvent) {
             val it = hitItem(e.x, e.y) ?: return
-            val owner = pageOf(it) ?: return
-            val idx = owner.items.indexOf(it)
-            if (idx >= 0) {
-                reordering = true
-                reorderIndex = idx
-                selected = it
-                onSelectionChanged?.invoke(it)
-                invalidate()
+            // 长按 = 加选 / 减选（层级调整已有「下移 / 置顶」按钮，不必再占一个手势）
+            if (selList.isEmpty()) { select(it); return }
+            if (selList.size == 1 && selList[0] === it) return
+            if (toggleMulti(it) && selList.size > 1) {
+                dragging = true
+                lastTouch.set(e.x, e.y)
+                beginDrag()
             }
         }
     })
@@ -224,14 +269,62 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     fun select(item: Item?) {
+        selList.clear()
+        if (item != null) selList.add(item)
         selected = item
         if (item != null) {
             val owner = pageOf(item)
             val idx = if (owner == null) -1 else project?.pages?.indexOfFirst { it === owner } ?: -1
             if (idx >= 0) activeIndex = idx
         }
+        resetSnapState()
         onSelectionChanged?.invoke(item)
         invalidate()
+    }
+
+    /**
+     * 加选 / 减选（长按元素）。只允许同一页——不同页的 x/y 是各自归一化的，
+     * 混在一起对齐会错位。
+     */
+    fun toggleMulti(item: Item): Boolean {
+        val owner = pageOf(item) ?: return false
+        if (selList.isNotEmpty() && pageOf(selList[0]) !== owner) return false
+        if (selList.contains(item)) {
+            if (selList.size == 1) return false       // 至少留一个
+            selList.remove(item)
+        } else {
+            selList.add(item)
+        }
+        selected = selList.firstOrNull()
+        onSelectionChanged?.invoke(selected)
+        invalidate()
+        return true
+    }
+
+    /** 全选当前页（多选用） */
+    fun selectAllOnPage() {
+        val owner = currentPage() ?: return
+        selList.clear()
+        owner.items.filter { it.type != Item.TYPE_STROKE }.forEach { selList.add(it) }
+        selected = selList.firstOrNull()
+        onSelectionChanged?.invoke(selected)
+        invalidate()
+    }
+
+    /** 直接设定选择集合（复制一组元素后选中副本时用） */
+    fun setSelection(items: List<Item>) {
+        selList.clear()
+        selList.addAll(items)
+        selected = selList.firstOrNull()
+        resetSnapState()
+        onSelectionChanged?.invoke(selected)
+        invalidate()
+    }
+
+    private fun resetSnapState() {
+        snapV = null; snapH = null
+        stuckVKind = null; stuckHKind = null
+        coolVUntil = 0L; coolHUntil = 0L
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -579,26 +672,27 @@ class PageCanvas @JvmOverloads constructor(
             canvas.drawLine(gx, slots[0].rect.top, gx, slots[0].rect.bottom, gp)
         }
 
-        // 吸附参考线
-        val sel = selected
-        if (sel != null && (guideV >= 0 || guideH >= 0)) {
-            val slot = slotOf(sel)
-            if (slot != null) {
-                val gp = Paint(Paint.ANTI_ALIAS_FLAG)
-                gp.color = 0x80B5442A.toInt()
-                gp.strokeWidth = 1.5f
-                gp.pathEffect = DashPathEffect(floatArrayOf(10f, 8f), 0f)
-                if (guideV >= 0) {
-                    val x = slot.rect.left + guideV * slot.rect.width()
-                    canvas.drawLine(x, slot.rect.top, x, slot.rect.bottom, gp)
-                }
-                if (guideH >= 0) {
-                    val y = slot.rect.top + guideH * slot.rect.height()
-                    canvas.drawLine(slot.rect.left, y, slot.rect.right, y, gp)
-                }
+        // 吸附参考线：颜色区分「对齐到什么」——朱红=元素，灰=页面，青=指示线，赭黄=等距，橄榄=整厘米
+        val snapSlot = selList.firstOrNull()?.let { slotOf(it) }
+        if (snapSlot != null && (snapV != null || snapH != null)) {
+            val gp = Paint(Paint.ANTI_ALIAS_FLAG)
+            gp.strokeWidth = 1.2f * resources.displayMetrics.density / viewScale
+            gp.pathEffect = DashPathEffect(floatArrayOf(10f, 8f), 0f)
+            snapV?.let { hit ->
+                gp.color = snapColor(hit.kind)
+                val x = snapSlot.rect.left + hit.value * snapSlot.rect.width()
+                canvas.drawLine(x, snapSlot.rect.top - 6f, x, snapSlot.rect.bottom + 6f, gp)
+            }
+            snapH?.let { hit ->
+                gp.color = snapColor(hit.kind)
+                val y = snapSlot.rect.top + hit.value * snapSlot.rect.height()
+                canvas.drawLine(snapSlot.rect.left - 6f, y, snapSlot.rect.right + 6f, y, gp)
             }
         }
-        if (sel != null) drawSelection(canvas, sel)
+        drawGuides(canvas)
+        if (selList.isNotEmpty()) {
+            for (it in selList) drawSelection(canvas, it, it === selected)
+        }
         canvas.restore()
 
         // 缩放指示（视图系，不随内容变换）
@@ -612,7 +706,53 @@ class PageCanvas @JvmOverloads constructor(
         }
     }
 
-    private fun drawSelection(canvas: Canvas, it: Item) {
+    private fun snapColor(kind: SnapKind): Int = when (kind) {
+        SnapKind.GUIDE -> 0xCC2F7C8C.toInt()
+        SnapKind.ELEMENT -> 0xCCB5442A.toInt()
+        SnapKind.PAGE -> 0x996B6B66.toInt()
+        SnapKind.EQUAL -> 0xCCC08A2E.toInt()
+        SnapKind.GRID -> 0xCC7A8C4A.toInt()
+    }
+
+    /** 指示线：贯穿整个工作区；模式内显示两端旋转手柄 */
+    private fun drawGuides(canvas: Canvas) {
+        val p = project ?: return
+        if (p.guides.isEmpty() || slots.isEmpty()) return
+        val center = contentCenterPx() ?: return
+        val slot = slots[0]
+        val page = p.pages.getOrNull(slot.index) ?: return
+        val pxPerMm = slot.rect.width() / page.widthMm(p).coerceAtLeast(1f)
+        val d = resources.displayMetrics.density
+        val len = hypot(width.toFloat(), height.toFloat()) * 1.8f
+        for (g in p.guides) {
+            val rad = Math.toRadians(g.angle.toDouble())
+            val ux = cos(rad).toFloat(); val uy = sin(rad).toFloat()
+            val nx = -uy; val ny = ux
+            val cx = center.x + g.axMm * pxPerMm
+            val cy = center.y + g.ayMm * pxPerMm
+            val on = guideMode && g === activeGuide
+            val gp = Paint(Paint.ANTI_ALIAS_FLAG)
+            gp.color = if (on) 0xF02F7C8C.toInt() else 0x8C2F7C8C.toInt()
+            gp.strokeWidth = (if (on) 2f else 1.2f) * d / viewScale
+            canvas.drawLine(cx - ux * len, cy - uy * len, cx + ux * len, cy + uy * len, gp)
+            if (guideMode) {
+                val hr = 9f * d / viewScale
+                val off = 120f * d / viewScale
+                val hp = Paint(Paint.ANTI_ALIAS_FLAG)
+                hp.style = Paint.Style.FILL
+                hp.color = 0xFFFFFFFF.toInt()
+                canvas.drawCircle(cx + ux * off, cy + uy * off, hr, hp)
+                canvas.drawCircle(cx - ux * off, cy - uy * off, hr, hp)
+                hp.style = Paint.Style.STROKE
+                hp.strokeWidth = 2f * d / viewScale
+                hp.color = if (on) 0xFF2F7C8C.toInt() else 0xAA2F7C8C.toInt()
+                canvas.drawCircle(cx + ux * off, cy + uy * off, hr, hp)
+                canvas.drawCircle(cx - ux * off, cy - uy * off, hr, hp)
+            }
+        }
+    }
+
+    private fun drawSelection(canvas: Canvas, it: Item, primary: Boolean) {
         val slot = slotOf(it) ?: return
         val cx = slot.rect.left + (it.x + it.w / 2f) * slot.rect.width()
         val cy = slot.rect.top + (it.y + it.h / 2f) * slot.rect.height()
@@ -623,20 +763,22 @@ class PageCanvas @JvmOverloads constructor(
         val sp = Paint(Paint.ANTI_ALIAS_FLAG)
         sp.style = Paint.Style.STROKE
         sp.color = 0xFFB5442A.toInt()
-        sp.strokeWidth = 2f
+        sp.strokeWidth = if (primary) 2f else 1.4f
         canvas.drawRect(cx - fw / 2f, cy - fh / 2f, cx + fw / 2f, cy + fh / 2f, sp)
-        sp.style = Paint.Style.FILL
-        canvas.drawCircle(cx - fw / 2f, cy - fh / 2f, 6f, sp)
-        // 右下角：拖拽调节大小手柄（小尺寸白点 + 加粗朱红描边）
-        val d = resources.displayMetrics.density
-        val hx = cx + fw / 2f; val hy = cy + fh / 2f
-        sp.color = 0xFFFFFFFF.toInt()
-        canvas.drawCircle(hx, hy, 5.5f * d, sp)
-        sp.style = Paint.Style.STROKE
-        sp.strokeWidth = 3f
-        sp.color = 0xFFB5442A.toInt()
-        canvas.drawCircle(hx, hy, 5.5f * d, sp)
-        sp.style = Paint.Style.FILL
+        if (primary) {
+            sp.style = Paint.Style.FILL
+            canvas.drawCircle(cx - fw / 2f, cy - fh / 2f, 6f, sp)
+            // 右下角：拖拽调节大小手柄（小尺寸白点 + 加粗朱红描边）
+            val d = resources.displayMetrics.density
+            val hx = cx + fw / 2f; val hy = cy + fh / 2f
+            sp.color = 0xFFFFFFFF.toInt()
+            canvas.drawCircle(hx, hy, 5.5f * d, sp)
+            sp.style = Paint.Style.STROKE
+            sp.strokeWidth = 3f
+            sp.color = 0xFFB5442A.toInt()
+            canvas.drawCircle(hx, hy, 5.5f * d, sp)
+            sp.style = Paint.Style.FILL
+        }
         canvas.restore()
         if (reordering) {
             val tp = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -645,6 +787,147 @@ class PageCanvas @JvmOverloads constructor(
             tp.textAlign = Paint.Align.CENTER
             canvas.drawText("拖动调整层级", width / 2f, 40f, tp)
         }
+    }
+
+    // ---------------- 指示线 ----------------
+
+    /** 进入 / 退出指示线模式。进入时若还没有线，先放一条水平的。 */
+    fun editGuides(on: Boolean) {
+        if (on && project?.guides.isNullOrEmpty()) addGuide()
+        if (!on) activeGuide = null
+        guideMode = on
+        invalidate()
+    }
+
+    fun addGuide(): Guide? {
+        val p = project ?: return null
+        val g = Guide(angle = 0f, axMm = 0f, ayMm = 0f)
+        p.guides.add(g)
+        activeGuide = g
+        onGuidesChanged?.invoke()
+        invalidate()
+        return g
+    }
+
+    fun removeActiveGuide(): Boolean {
+        val p = project ?: return false
+        val g = activeGuide ?: return false
+        p.guides.removeAll { it === g }
+        activeGuide = null
+        onGuidesChanged?.invoke()
+        invalidate()
+        return true
+    }
+
+    fun clearGuides() {
+        val p = project ?: return
+        if (p.guides.isEmpty()) return
+        p.guides.clear()
+        activeGuide = null
+        onGuidesChanged?.invoke()
+        invalidate()
+    }
+
+    /**
+     * 元素旋转时与指示线联动：快到与某条线平行时吸附过去。
+     * 矩形是 90° 周期，所以把线角折叠到 0..90 再比。
+     */
+    fun snapAngleWithGuides(deg: Float): Float {
+        val base = snapAngle(deg)
+        if (base != deg) return base
+        val p = project ?: return base
+        var best = base
+        var bestD = Float.MAX_VALUE
+        for (g in p.guides) {
+            val target = ((g.angle % 90f) + 90f) % 90f
+            for (k in 0 until 4) {
+                val cand = target + k * 90f
+                var d = abs(deg - cand) % 180f
+                if (d > 90f) d = 180f - d
+                if (d < bestD) { bestD = d; best = cand }
+            }
+        }
+        return if (bestD <= 2.5f) best else base
+    }
+
+    private fun guideTouch(ev: MotionEvent): Boolean {
+        val p = project ?: return true
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val hit = hitGuide(ev.x, ev.y)
+                if (hit == null) {
+                    activeGuide = null; guideDragMode = 0
+                } else {
+                    activeGuide = hit.first
+                    guideDragMode = hit.second
+                    lastTouch.set(ev.x, ev.y)
+                    onGuideEditStart?.invoke()
+                }
+                invalidate()
+                return true
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val g = activeGuide ?: return true
+                if (guideDragMode == 0) return true
+                val center = contentCenterPx() ?: return true
+                val slot = slots.getOrNull(0) ?: return true
+                val page = p.pages.getOrNull(slot.index) ?: return true
+                val pxPerMm = slot.rect.width() / page.widthMm(p).coerceAtLeast(1f)
+                if (guideDragMode == 1) {
+                    // 平移：只取法线分量——沿线的方向对一条贯穿线没有视觉意义
+                    val rad = Math.toRadians(g.angle.toDouble())
+                    val nx = -sin(rad).toFloat(); val ny = cos(rad).toFloat()
+                    val along = (ev.x - lastTouch.x) * nx + (ev.y - lastTouch.y) * ny
+                    g.axMm += nx * along / pxPerMm
+                    g.ayMm += ny * along / pxPerMm
+                } else {
+                    // 旋转：绕锚点转
+                    val cx = center.x + g.axMm * pxPerMm
+                    val cy = center.y + g.ayMm * pxPerMm
+                    val deg = Math.toDegrees(
+                        atan2((ev.y - cy).toDouble(), (ev.x - cx).toDouble())).toFloat()
+                    g.angle = snapGuideAngle(deg)
+                }
+                lastTouch.set(ev.x, ev.y)
+                invalidate()
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (guideDragMode != 0) onGuidesChanged?.invoke()
+                guideDragMode = 0
+                return true
+            }
+        }
+        return true
+    }
+
+    /** 命中：handler 圆 → 旋转；线体 → 平移。后加的线在上，倒序找。 */
+    private fun hitGuide(vx: Float, vy: Float): Pair<Guide, Int>? {
+        val p = project ?: return null
+        val center = contentCenterPx() ?: return null
+        val slot = slots.getOrNull(0) ?: return null
+        val page = p.pages.getOrNull(slot.index) ?: return null
+        val pxPerMm = slot.rect.width() / page.widthMm(p).coerceAtLeast(1f)
+        val d = resources.displayMetrics.density
+        val hr = 22f * d / viewScale
+        val off = 120f * d / viewScale
+        val lineTol = 16f * d / viewScale
+        val cx0 = center.x; val cy0 = center.y
+        for (g in p.guides.reversed()) {
+            val rad = Math.toRadians(g.angle.toDouble())
+            val ux = cos(rad).toFloat(); val uy = sin(rad).toFloat()
+            val cx = cx0 + g.axMm * pxPerMm; val cy = cy0 + g.ayMm * pxPerMm
+            if (hypot(vx - (cx + ux * off), vy - (cy + uy * off)) <= hr) return g to 2
+            if (hypot(vx - (cx - ux * off), vy - (cy - uy * off)) <= hr) return g to 2
+        }
+        for (g in p.guides.reversed()) {
+            val rad = Math.toRadians(g.angle.toDouble())
+            val ux = cos(rad).toFloat(); val uy = sin(rad).toFloat()
+            val cx = cx0 + g.axMm * pxPerMm; val cy = cy0 + g.ayMm * pxPerMm
+            if (distToSeg(vx, vy, cx - ux * 4000f, cy - uy * 4000f,
+                    cx + ux * 4000f, cy + uy * 4000f) <= lineTol) return g to 1
+        }
+        return null
     }
 
     // ---------------- 触摸 ----------------
@@ -903,11 +1186,13 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     private fun editTouch(ev: MotionEvent, rawX: Float, rawY: Float): Boolean {
+        // 指示线模式：只操作线，不选元素、不拖元素
+        if (guideMode) return guideTouch(ev)
         gesture.onTouchEvent(ev)
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 onTouchDown?.invoke()
-                if (selected != null && hitResizeHandle(ev.x, ev.y)) {
+                if (selected != null && selList.size == 1 && hitResizeHandle(ev.x, ev.y)) {
                     resizing = true
                     val sel = selected!!
                     resizeBaseW = sel.w
@@ -922,10 +1207,12 @@ class PageCanvas @JvmOverloads constructor(
                 emptyDownX = ev.x; emptyDownY = ev.y
                 val hit = hitItem(ev.x, ev.y)
                 hasItemAtDown = hit != null
-                dragging = hit != null && hit === selected
+                // 按在任一已选元素上即可整体拖动（多选时是整组移动）
+                dragging = hit != null && selList.any { it === hit }
+                if (dragging) beginDrag()
             }
             MotionEvent.ACTION_POINTER_DOWN -> {
-                if (ev.pointerCount == 2 && selected != null) {
+                if (ev.pointerCount == 2 && selected != null && selList.size == 1) {
                     val it = selected!!
                     if (slotOf(it) != null) {
                         multiActive = true
@@ -967,17 +1254,18 @@ class PageCanvas @JvmOverloads constructor(
                     // 墙上的照片按实际尺寸等比缩放
                     if (it.printMm != null && multiInitialPrintMm > 0f)
                         it.printMm = multiInitialPrintMm * scale
-                    it.rotation = snapAngle(multiInitialRot + deltaAngle)
+                    it.rotation = snapAngleWithGuides(multiInitialRot + deltaAngle)
                     invalidate()
-                } else if (dragging && selected != null) {
-                    val it = selected!!
-                    val slot = slotOf(it) ?: return true
-                    it.x += (ev.x - lastTouch.x) / slot.rect.width()
-                    it.y += (ev.y - lastTouch.y) / slot.rect.height()
-                    applySnap(it)
+                } else if (dragging && selList.isNotEmpty()) {
+                    val slot = slotOf(selList[0]) ?: return true
+                    // 只累计手指位移，绝不把吸附结果写回基准
+                    dragRawDx += (ev.x - lastTouch.x) / slot.rect.width()
+                    dragRawDy += (ev.y - lastTouch.y) / slot.rect.height()
+                    applyDrag(slot)
                     invalidate()
                 }
-                if (dragging) updateDropTarget(rawX, rawY)
+                // 多选整体移动不跨页：跨页只搬一个元素，选择集就会分裂到两页
+                if (dragging && selList.size == 1) updateDropTarget(rawX, rawY)
                 lastTouch.set(ev.x, ev.y)
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -1039,7 +1327,7 @@ class PageCanvas @JvmOverloads constructor(
                 }
                 multiActive = false
                 dragging = false
-                guideV = -1f; guideH = -1f
+                resetSnapState()
                 invalidate()
             }
         }
@@ -1071,17 +1359,183 @@ class PageCanvas @JvmOverloads constructor(
         return if (abs(a - nearest) <= 8f) nearest else a
     }
 
-    private fun applySnap(it: Item) {
-        val snapT = 0.012f
-        guideV = -1f; guideH = -1f
-        val cx = it.x + it.w / 2f
-        val cy = it.y + it.h / 2f
-        for (target in floatArrayOf(0.5f, 1f / 3f, 2f / 3f)) {
-            if (abs(cx - target) < snapT) { it.x += target - cx; guideV = target; break }
+    private fun beginDrag() {
+        dragRawDx = 0f; dragRawDy = 0f
+        dragOriginX.clear(); dragOriginY.clear()
+        for (it in selList) { dragOriginX.add(it.x); dragOriginY.add(it.y) }
+        resetSnapState()
+        snapV = null; snapH = null
+    }
+
+    /**
+     * 把「手指位移 + 吸附修正」写回元素。
+     * 每帧都从 dragOrigin 重算，吸附不进入基准，于是继续拖就能离开被吸住的位置。
+     */
+    private fun applyDrag(slot: Slot) {
+        val p = project ?: return
+        val page = p.pages.getOrNull(slot.index) ?: return
+        if (selList.isEmpty()) return
+        var minX = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE
+        var minY = Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (i in selList.indices) {
+            val x0 = dragOriginX[i] + dragRawDx
+            val y0 = dragOriginY[i] + dragRawDy
+            if (x0 < minX) minX = x0
+            if (x0 + selList[i].w > maxX) maxX = x0 + selList[i].w
+            if (y0 < minY) minY = y0
+            if (y0 + selList[i].h > maxY) maxY = y0 + selList[i].h
         }
-        for (target in floatArrayOf(0.5f, 1f / 3f, 2f / 3f)) {
-            if (abs(cy - target) < snapT) { it.y += target - cy; guideH = target; break }
+        val dx = snapAxis(left = minX, w = maxX - minX, tol = tolX(slot), vertical = true,
+            slot = slot, page = page, top = minY, h = maxY - minY)
+        val dy = snapAxis(left = minY, w = maxY - minY, tol = tolY(slot), vertical = false,
+            slot = slot, page = page, top = minX, h = maxX - minX)
+        for (i in selList.indices) {
+            selList[i].x = dragOriginX[i] + dragRawDx + dx
+            selList[i].y = dragOriginY[i] + dragRawDy + dy
         }
+    }
+
+    private fun tolX(slot: Slot): Float =
+        (SNAP_TOL_DP * resources.displayMetrics.density) /
+                (slot.rect.width() * viewScale).coerceAtLeast(1f)
+
+    private fun tolY(slot: Slot): Float =
+        (SNAP_TOL_DP * resources.displayMetrics.density) /
+                (slot.rect.height() * viewScale).coerceAtLeast(1f)
+
+    /**
+     * 单轴吸附：返回该轴的修正量，并记下命中的目标用于画参考线。
+     *
+     * @param vertical true = 处理 x 轴（竖直参考线）
+     * @param slot/page 用于取元素列表、页面尺寸与指示线坐标
+     * @param top 另一轴的起点（等距判定要用"是否同一行/同一列"）
+     */
+    private fun snapAxis(
+        left: Float, w: Float, tol: Float, vertical: Boolean,
+        slot: Slot, page: Page, top: Float, h: Float
+    ): Float {
+        val p = project ?: return 0f
+        val acc = AxisSnapper()
+        // 页面：左右/上下边与中线
+        acc.add(0f, SnapKind.PAGE); acc.add(0.5f, SnapKind.PAGE); acc.add(1f, SnapKind.PAGE)
+        // 同页其他元素（笔画不参与）
+        val others = ArrayList<Item>()
+        for (o in page.items) {
+            if (o.type == Item.TYPE_STROKE) continue
+            if (selList.any { it === o }) continue
+            others.add(o)
+        }
+        for (o in others) {
+            if (vertical) {
+                acc.add(o.x, SnapKind.ELEMENT)
+                acc.add(o.x + o.w / 2f, SnapKind.ELEMENT)
+                acc.add(o.x + o.w, SnapKind.ELEMENT)
+            } else {
+                acc.add(o.y, SnapKind.ELEMENT)
+                acc.add(o.y + o.h / 2f, SnapKind.ELEMENT)
+                acc.add(o.y + o.h, SnapKind.ELEMENT)
+            }
+        }
+        // 等距：左右（或上下）最近邻居之间的正中
+        run {
+            var prevEnd = Float.NaN
+            var nextStart = Float.NaN
+            for (o in others) {
+                val oS = if (vertical) o.x else o.y
+                val oSz = if (vertical) o.w else o.h
+                val oC = if (vertical) o.y else o.x
+                val oCz = if (vertical) o.h else o.w
+                // 只在另一轴有重叠的元素之间比间距（同一行 / 同一列）
+                if (oC + oCz <= top + 1e-4f || oC >= top + h - 1e-4f) continue
+                val oE = oS + oSz
+                if (oE <= left + 1e-4f) { if (prevEnd.isNaN() || oE > prevEnd) prevEnd = oE }
+                if (oS >= left + w - 1e-4f) { if (nextStart.isNaN() || oS < nextStart) nextStart = oS }
+            }
+            if (!prevEnd.isNaN() && !nextStart.isNaN()) {
+                val gap = nextStart - prevEnd - w
+                if (gap > 0f) acc.add(prevEnd + gap / 2f, SnapKind.EQUAL)
+            }
+        }
+        // 指示线：近水平参与纵向、近垂直参与横向
+        addGuideTargets(acc, vertical, slot, p, left + w / 2f, top + h / 2f)
+        // 展览墙：对齐到整厘米
+        if (p.type == Project.TYPE_EXHIBITION) {
+            val mm = if (vertical) page.widthMm(p) else page.heightMm(p)
+            val step = 10f / mm.coerceAtLeast(1f)
+            acc.add(round(left / step) * step, SnapKind.GRID)
+        }
+
+        val now = android.os.SystemClock.uptimeMillis()
+        val coolUntil = if (vertical) coolVUntil else coolHUntil
+        if (now < coolUntil) return 0f
+        val hit = acc.hit(left, w, tol) ?: run {
+            if (vertical) stuckVKind = null else stuckHKind = null
+            return 0f
+        }
+        if (shouldRelease(hit, left, tol, vertical, now)) return 0f
+        if (vertical) snapV = hit else snapH = hit
+        return hit.delta
+    }
+
+    /** 同一目标上手指继续远离超过 1.6 倍容差 → 放开并冷却 260ms，避免"粘住拖不走"。 */
+    private fun shouldRelease(
+        hit: AxisSnapper.Hit, raw: Float, tol: Float, vertical: Boolean, now: Long
+    ): Boolean {
+        val kind = if (vertical) stuckVKind else stuckHKind
+        val value = if (vertical) stuckVValue else stuckHValue
+        val rawAt = if (vertical) stuckVRaw else stuckHRaw
+        if (kind == null || value != hit.value) {
+            if (vertical) { stuckVKind = hit.kind; stuckVValue = hit.value; stuckVRaw = raw }
+            else { stuckHKind = hit.kind; stuckHValue = hit.value; stuckHRaw = raw }
+            return false
+        }
+        if (abs(raw - rawAt) > 1.6f * tol) {
+            if (vertical) { coolVUntil = now + 260; stuckVKind = null }
+            else { coolHUntil = now + 260; stuckHKind = null }
+            return true
+        }
+        return false
+    }
+
+    private fun addGuideTargets(
+        acc: AxisSnapper, vertical: Boolean, slot: Slot, p: Project,
+        cxN: Float, cyN: Float
+    ) {
+        if (p.guides.isEmpty()) return
+        val center = contentCenterPx() ?: return
+        val page = p.pages.getOrNull(slot.index) ?: return
+        val wmm = page.widthMm(p).coerceAtLeast(1f)
+        val pxPerMm = slot.rect.width() / wmm
+        for (g in p.guides) {
+            val rad = Math.toRadians(g.angle.toDouble())
+            val nx = -sin(rad).toFloat(); val ny = cos(rad).toFloat()
+            val px = center.x + g.axMm * pxPerMm
+            val py = center.y + g.ayMm * pxPerMm
+            if (vertical) {
+                // 接近竖直：x 为常数
+                if (abs(abs(g.angle) - 90f) <= 1f)
+                    acc.add((px - slot.rect.left) / slot.rect.width(), SnapKind.GUIDE)
+            } else {
+                // 接近水平：取元素中心 x 处的线高（允许 1° 内的轻微倾斜）
+                if (abs(g.angle) <= 1f) {
+                    val tx = slot.rect.left + cxN * slot.rect.width()
+                    val yPx = py + tan(rad).toFloat() * (tx - px)
+                    acc.add((yPx - slot.rect.top) / slot.rect.height(), SnapKind.GUIDE)
+                }
+            }
+        }
+    }
+
+    /** 可视内容（单页或对开）的中心，单位内容像素 */
+    private fun contentCenterPx(): PointF? {
+        if (slots.isEmpty()) return null
+        var l = Float.MAX_VALUE; var r = -Float.MAX_VALUE
+        var t = Float.MAX_VALUE; var b = -Float.MAX_VALUE
+        for (s in slots) {
+            l = min(l, s.rect.left); r = max(r, s.rect.right)
+            t = min(t, s.rect.top); b = max(b, s.rect.bottom)
+        }
+        return PointF((l + r) / 2f, (t + b) / 2f)
     }
 
     private fun handleReorderMove(ev: MotionEvent) {
@@ -1241,5 +1695,110 @@ class PageCanvas @JvmOverloads constructor(
         it.rotation = snapAngle(it.rotation + 90f)
         onModified?.invoke()
         invalidate()
+    }
+
+    // ---------------- 对齐命令 ----------------
+
+    /** 各自对齐到页面的九宫格：h 0左 1中 2右，v 0上 1中 2下（-1 = 该轴不动） */
+    fun alignToPage(h: Int, v: Int): Boolean {
+        if (selList.isEmpty()) return false
+        for (it in selList) {
+            when (h) {
+                0 -> it.x = 0f
+                1 -> it.x = 0.5f - it.w / 2f
+                2 -> it.x = 1f - it.w
+            }
+            when (v) {
+                0 -> it.y = 0f
+                1 -> it.y = 0.5f - it.h / 2f
+                2 -> it.y = 1f - it.h
+            }
+        }
+        onModified?.invoke()
+        invalidate()
+        return true
+    }
+
+    /** 相对选区外框对齐：h 0左 1水平居中 2右，v 0上 1垂直居中 2下（-1 = 该轴不动） */
+    fun alignToSelection(h: Int, v: Int): Boolean {
+        if (selList.size < 2) return false
+        var minX = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE
+        var minY = Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
+        for (it in selList) {
+            minX = min(minX, it.x); maxX = max(maxX, it.x + it.w)
+            minY = min(minY, it.y); maxY = max(maxY, it.y + it.h)
+        }
+        for (it in selList) {
+            when (h) {
+                0 -> it.x = minX
+                1 -> it.x = (minX + maxX) / 2f - it.w / 2f
+                2 -> it.x = maxX - it.w
+            }
+            when (v) {
+                0 -> it.y = minY
+                1 -> it.y = (minY + maxY) / 2f - it.h / 2f
+                2 -> it.y = maxY - it.h
+            }
+        }
+        onModified?.invoke()
+        invalidate()
+        return true
+    }
+
+    /** 等距分布：首尾不动，中间按「边缘间距相等」排开 */
+    fun distribute(horizontal: Boolean): Boolean {
+        if (selList.size < 3) return false
+        val sorted = selList.sortedBy { if (horizontal) it.x else it.y }
+        val first = sorted.first(); val last = sorted.last()
+        val startEdge = if (horizontal) first.x + first.w else first.y + first.h
+        val endEdge = if (horizontal) last.x else last.y
+        var middleSize = 0f
+        for (i in 1 until sorted.size - 1)
+            middleSize += if (horizontal) sorted[i].w else sorted[i].h
+        val gap = (endEdge - startEdge - middleSize) / (sorted.size - 1)
+        var cursor = startEdge + gap
+        for (i in 1 until sorted.size - 1) {
+            val it = sorted[i]
+            if (horizontal) it.x = cursor else it.y = cursor
+            cursor += (if (horizontal) it.w else it.h) + gap
+        }
+        onModified?.invoke()
+        invalidate()
+        return true
+    }
+
+    /** 以第一个选中项为基准同宽 / 同高。照片按比例联动，绝不拉伸变形。 */
+    fun matchSize(width: Boolean): Boolean {
+        if (selList.size < 2) return false
+        val ref = selList[0]
+        for (i in 1 until selList.size) {
+            val it = selList[i]
+            if (it.type == Item.TYPE_PHOTO && it.h > 0f && it.w > 0f) {
+                val ar = it.w / it.h
+                if (width) { it.w = ref.w; it.h = it.w / ar }
+                else { it.h = ref.h; it.w = it.h * ar }
+            } else {
+                if (width) it.w = ref.w else it.h = ref.h
+            }
+        }
+        onModified?.invoke()
+        invalidate()
+        return true
+    }
+
+    /** 展览墙：把选中项左上角对齐到整厘米 */
+    fun snapSelectionToCm(): Boolean {
+        val p = project ?: return false
+        if (p.type != Project.TYPE_EXHIBITION) return false
+        val page = selList.firstOrNull()?.let { pageOf(it) } ?: return false
+        val stepX = 10f / page.widthMm(p).coerceAtLeast(1f)
+        val stepY = 10f / page.heightMm(p).coerceAtLeast(1f)
+        for (it in selList) {
+            it.x = round(it.x / stepX) * stepX
+            it.y = round(it.y / stepY) * stepY
+        }
+        onModified?.invoke()
+        invalidate()
+        return true
     }
 }

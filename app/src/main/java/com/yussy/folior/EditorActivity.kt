@@ -40,6 +40,12 @@ class EditorActivity : AppCompatActivity() {
     private var framingIdx = 0
     private var drawBarIdx = 0
     private lateinit var canvasWrap: android.widget.FrameLayout
+    // 工作区右上角浮动菜单
+    private lateinit var quickToggle: TextView
+    private lateinit var quickActions: LinearLayout
+    private lateinit var quickA: TextView
+    private lateinit var quickB: TextView
+    private var quickOpen = false
     private lateinit var sideStripWrap: LinearLayout
     private lateinit var bottomStripWrap: LinearLayout
     // 横屏右侧纵向工具槽（一级工具 / 二级工具 / 装裱 / 绘制 共用同一槽位，互斥占位）
@@ -120,6 +126,166 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun dp(v: Float) = (v * resources.displayMetrics.density).toInt()
+
+    // ---------------- 浮动菜单 ----------------
+
+    private fun quickAction(): TextView = TextView(this).apply {
+        textSize = 13f
+        setTextColor(0xFF1A1A18.toInt())
+        gravity = Gravity.CENTER
+        setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
+        background = GradientDrawable().apply {
+            cornerRadius = dp(16f).toFloat()
+            setColor(0xFFFFFFFF.toInt())
+            setStroke(dp(0.8f), 0x1F000000)
+        }
+        elevation = dp(3f).toFloat()
+        layoutParams = LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            topMargin = dp(8f)
+            gravity = Gravity.END
+        }
+    }
+
+    private fun setQuickOpen(open: Boolean) {
+        quickOpen = open
+        quickActions.visibility = if (open) View.VISIBLE else View.GONE
+        quickToggle.text = if (open) "×" else "⋯"
+    }
+
+    private fun updateQuickMenu() {
+        if (!::quickA.isInitialized) return
+        if (canvas.guideMode) {
+            quickA.text = "完成"
+            quickA.setOnClickListener {
+                setQuickOpen(false)
+                canvas.editGuides(false)
+                updateBars()
+            }
+            quickB.text = "清除"
+            quickB.visibility = View.VISIBLE
+            quickB.setOnClickListener {
+                beginDiscreteChange()
+                canvas.clearGuides()          // 清空后退出模式，不会立刻又长出一条
+                canvas.editGuides(false)
+                setQuickOpen(false)
+                scheduleSave()
+                updateBars()
+            }
+        } else {
+            quickA.text = "指示线"
+            quickA.setOnClickListener {
+                setQuickOpen(false)
+                if (project.guides.isEmpty()) beginDiscreteChange()
+                canvas.select(null)
+                canvas.editGuides(true)
+                Toast.makeText(this, "拖线平移 · 拖两端旋转 · 元素会吸到线",
+                    Toast.LENGTH_SHORT).show()
+                updateBars()
+            }
+            quickB.text = "对齐"
+            quickB.visibility = View.VISIBLE
+            quickB.setOnClickListener {
+                setQuickOpen(false)
+                openAlignPanel()
+            }
+        }
+    }
+
+    // ---------------- 对齐面板 ----------------
+
+    private var alignDialog: AlertDialog? = null
+
+    private fun openAlignPanel() {
+        if (canvas.selection.isEmpty()) {
+            Toast.makeText(this, "先选中元素", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val n = canvas.multiCount
+        val multi = n > 1
+        val isExh = project.type == Project.TYPE_EXHIBITION
+
+        fun commitChange(action: () -> Unit) {
+            beginDiscreteChange()
+            action()
+            scheduleSave()
+            strip.refresh()
+        }
+
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16f), dp(2f), dp(16f), dp(2f))
+        }
+
+        fun label(t: String) {
+            box.addView(TextView(this).apply {
+                text = t
+                textSize = 11.5f
+                setTextColor(0xFF8A8A84.toInt())
+                setPadding(dp(3f), dp(12f), 0, dp(5f))
+            })
+        }
+
+        fun cells(rows: List<List<String>>, onPick: (Int, Int) -> Unit) {
+            rows.forEachIndexed { r, row ->
+                val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                row.forEachIndexed { c, text ->
+                    val b = TextView(this).apply {
+                        this.text = text
+                        textSize = 13f
+                        gravity = Gravity.CENTER
+                        setTextColor(0xFF1A1A18.toInt())
+                        maxLines = 1
+                        background = GradientDrawable().apply {
+                            cornerRadius = dp(8f).toFloat()
+                            setColor(0xFFF2F2EE.toInt())
+                        }
+                        setOnClickListener {
+                            commitChange { onPick(c, r) }
+                            alignDialog?.dismiss()
+                        }
+                    }
+                    line.addView(b, LinearLayout.LayoutParams(0, dp(38f), 1f).apply {
+                        leftMargin = dp(3f); rightMargin = dp(3f); topMargin = dp(3f)
+                    })
+                }
+                box.addView(line)
+            }
+        }
+
+        label("对齐到页面")
+        cells(listOf(
+            listOf("↖", "↑", "↗"),
+            listOf("←", "⊙", "→"),
+            listOf("↙", "↓", "↘")
+        )) { c, r -> canvas.alignToPage(c, r) }
+
+        if (multi) {
+            label("对齐到选区")
+            cells(listOf(listOf("左", "水平居中", "右"))) { c, _ -> canvas.alignToSelection(c, -1) }
+            cells(listOf(listOf("上", "垂直居中", "下"))) { c, _ -> canvas.alignToSelection(-1, c) }
+        }
+        if (n >= 3) {
+            label("等距分布")
+            cells(listOf(listOf("水平等距", "垂直等距"))) { c, _ -> canvas.distribute(c == 0) }
+        }
+        if (multi) {
+            label("同尺寸（以第一个为准，照片按比例缩放）")
+            cells(listOf(listOf("同宽", "同高"))) { c, _ -> canvas.matchSize(c == 0) }
+        }
+        if (isExh) {
+            label("墙体")
+            cells(listOf(listOf("对齐到整厘米"))) { _, _ -> canvas.snapSelectionToCm() }
+        }
+
+        val scroll = android.widget.ScrollView(this).apply { addView(box) }
+        alignDialog = AlertDialog.Builder(this)
+            .setTitle(if (multi) "对齐 · 已选 $n 个" else "对齐")
+            .setView(scroll)
+            .setNegativeButton("关闭", null)
+            .create()
+        alignDialog?.show()
+    }
 
     override fun onResume() {
         super.onResume()
@@ -272,6 +438,45 @@ class EditorActivity : AppCompatActivity() {
         canvas.layoutParams = android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         canvasWrap.addView(canvas)
+
+        // ---- 工作区右上角浮动菜单：指示线 / 对齐 ----
+        quickToggle = TextView(this).apply {
+            text = "⋯"
+            textSize = 19f
+            gravity = Gravity.CENTER
+            setTextColor(0xFF1A1A18.toInt())
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFFFFFFFF.toInt())
+                setStroke(dp(0.8f), 0x1F000000)
+            }
+            elevation = dp(3f).toFloat()
+            setOnClickListener { setQuickOpen(!quickOpen) }
+        }
+        quickA = quickAction()
+        quickB = quickAction()
+        quickActions = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+            visibility = View.GONE
+            addView(quickA)
+            addView(quickB)
+        }
+        val quickBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.END
+            addView(quickToggle, LinearLayout.LayoutParams(dp(40f), dp(40f)).apply {
+                gravity = Gravity.END
+            })
+            addView(quickActions)
+        }
+        canvasWrap.addView(quickBox, android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP or Gravity.END).apply {
+            topMargin = dp(10f); rightMargin = dp(10f)
+        })
+        updateQuickMenu()
+
         bodyRow.addView(canvasWrap)
 
         // 横屏右侧纵向工具槽：内部各工具组用 weight 均分栏高，正好充满、无需滚动
@@ -304,11 +509,13 @@ class EditorActivity : AppCompatActivity() {
         // 顺序：删除 / 替换(文本为编辑) / 复制 / 装裱 / 旋转 / 下移 / 置顶 / 尺寸(仅展览照片)
         // 1) 删除放第一位：任何选中态都立即可见（红色 = 破坏性操作）
         selBtn("删除") {
-            val it = selected() ?: return@selBtn
-            AlertDialog.Builder(this).setTitle("删除该元素？")
+            val items = canvas.selection.toList()
+            if (items.isEmpty()) return@selBtn
+            val title = if (items.size > 1) "删除这 ${items.size} 个元素？" else "删除该元素？"
+            AlertDialog.Builder(this).setTitle(title)
                 .setPositiveButton("删除") { _, _ ->
                     beginDiscreteChange()
-                    (pageOfItem(it) ?: page()).items.remove(it)
+                    for (it in items) (pageOfItem(it) ?: page()).items.remove(it)
                     canvas.select(null)
                     canvas.invalidate()
                     scheduleSave()
@@ -343,6 +550,7 @@ class EditorActivity : AppCompatActivity() {
             }
             editPhotoPrintSize(it)
         }
+        selBtn("对齐") { openAlignPanel() }.also { it.visibility = View.GONE }
         root.addView(selectionBar)
 
         // ---- 内联装裱面板（布局流内，不遮挡工作区；即时生效） ----
@@ -536,6 +744,7 @@ class EditorActivity : AppCompatActivity() {
         // 点画布任意处 = 收起预览栏已固定的删除按钮
         canvas.onTouchDown = {
             strip.hideReveal()
+            if (quickOpen) setQuickOpen(false)
             // 一次触摸内的所有变更（拖动/缩放/旋转）合并为一步撤销
             gestureSnapshot = snapshot()
             gestureRecorded = false
@@ -552,6 +761,12 @@ class EditorActivity : AppCompatActivity() {
         canvas.onDragTargetAt = { x, y -> strip.pageAt(x, y) }
         canvas.onStripHighlight = { idx -> strip.setDragTarget(idx) }
         canvas.onItemDropToPage = { item, idx -> transferItemTo(item, idx) }
+        canvas.onGuideEditStart = { beginDiscreteChange() }
+        canvas.onGuidesChanged = {
+            scheduleSave()
+            strip.refresh()
+            updateQuickMenu()
+        }
 
         strip.project = project
         strip.onPageSelected = { idx ->
@@ -1265,15 +1480,21 @@ class EditorActivity : AppCompatActivity() {
             val it = canvas.selected!!
             val isPhoto = it.type == Item.TYPE_PHOTO
             val isExh = project.type == Project.TYPE_EXHIBITION
+            // 多选时只保留「删除 / 复制」，其余（编辑、装裱、旋转、层级、尺寸）都作用于单个元素
+            val multi = canvas.multiCount > 1
             // 0=删除 1=替换/编辑 2=复制 3=装裱 4=旋转 5=下移 6=置顶 7=尺寸
             selButtons.getOrNull(1)?.apply {               // 照片→替换；其它→编辑
                 text = if (isPhoto) "替换" else "编辑"
-                visibility = View.VISIBLE
+                visibility = if (multi) View.GONE else View.VISIBLE
             }
             selButtons.getOrNull(3)?.visibility =          // 装裱：照片与文字
-                if (isPhoto || it.type == Item.TYPE_TEXT) View.VISIBLE else View.GONE
+                if (!multi && (isPhoto || it.type == Item.TYPE_TEXT)) View.VISIBLE else View.GONE
+            selButtons.getOrNull(4)?.visibility = if (multi) View.GONE else View.VISIBLE
+            selButtons.getOrNull(5)?.visibility = if (multi) View.GONE else View.VISIBLE
+            selButtons.getOrNull(6)?.visibility = if (multi) View.GONE else View.VISIBLE
             selButtons.getOrNull(7)?.visibility =          // 尺寸：展览照片
-                if (isPhoto && isExh) View.VISIBLE else View.GONE
+                if (!multi && isPhoto && isExh) View.VISIBLE else View.GONE
+            selButtons.getOrNull(8)?.visibility = if (multi) View.VISIBLE else View.GONE
         }
         // 可见集合变化 → 重新分行（均分铺满、每行不少于 3 个）
         val sig = selButtons.joinToString("") { if (it.visibility == View.VISIBLE) "1" else "0" }
@@ -1281,6 +1502,7 @@ class EditorActivity : AppCompatActivity() {
             selSig = sig
             relayoutButtons(selectionBar, selButtons, 7, isLandscape())
         }
+        updateQuickMenu()
     }
 
     private fun scheduleSave() {
@@ -1627,12 +1849,18 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun duplicateSelected() {
-        val it = selected() ?: return
+        val items = canvas.selection.toList()
+        if (items.isEmpty()) return
         beginDiscreteChange()
-        val copy = it.copy(id = java.util.UUID.randomUUID().toString(),
-            x = (it.x + 0.04f).coerceAtMost(1f - it.w), y = (it.y + 0.04f).coerceAtMost(1f - it.h))
-        (pageOfItem(it) ?: page()).items.add(copy)
-        canvas.select(copy)
+        val copies = ArrayList<Item>()
+        for (it in items) {
+            val copy = it.copy(id = java.util.UUID.randomUUID().toString(),
+                x = (it.x + 0.04f).coerceAtMost(1f - it.w),
+                y = (it.y + 0.04f).coerceAtMost(1f - it.h))
+            (pageOfItem(it) ?: page()).items.add(copy)
+            copies.add(copy)
+        }
+        canvas.setSelection(copies)
         canvas.invalidate()
         scheduleSave()
     }
