@@ -29,8 +29,8 @@ android {
         applicationId = "com.yussy.folior"
         minSdk = 31
         targetSdk = 34
-        versionCode = 81
-        versionName = "0.35.0"
+        versionCode = 82
+        versionName = "0.36.0"
     }
 
     signingConfigs {
