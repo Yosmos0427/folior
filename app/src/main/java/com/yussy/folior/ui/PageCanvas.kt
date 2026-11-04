@@ -1181,7 +1181,7 @@ class PageCanvas @JvmOverloads constructor(
                 slot.rect.width()).coerceAtLeast(0.02f)
         } else {
             item.h = (PageRenderer.textLayoutHeightPx(
-                item, item.w * slot.rect.width(), slot.rect.height()) /
+                item, item.w * slot.rect.width(), slot.rect.height(), context) /
                 slot.rect.height()).coerceAtLeast(0.02f)
         }
         invalidate()

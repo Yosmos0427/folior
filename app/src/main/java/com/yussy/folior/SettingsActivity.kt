@@ -175,6 +175,13 @@ class SettingsActivity : AppCompatActivity() {
             setPadding(dp(2f), dp(10f), dp(2f), 0)
         })
 
+        content.addView(TextView(this).apply {
+            text = "内置字体均为 SIL OFL 授权，可自由商用"
+            textSize = 11f
+            setTextColor(0xFFA8A8A0.toInt())
+            setPadding(dp(2f), dp(14f), dp(2f), 0)
+        })
+
         root.addView(ScrollView(this).apply {
             isVerticalScrollBarEnabled = false
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS

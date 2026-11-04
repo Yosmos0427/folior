@@ -1518,11 +1518,11 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun addText() {
-        TextDialog.show(this, "文字", 0.04f, "#1A1A18", false, false, 0) { text, fs, color, bold, italic, align, vertical, lineHeight ->
+        TextDialog.show(this, "文字", 0.04f, "#1A1A18", false, false, 0) { text, fs, color, bold, italic, align, vertical, lineHeight, font ->
             val item = Item(
                 type = Item.TYPE_TEXT, text = text, fontScale = fs, color = color,
                 bold = bold, italic = italic, align = align,
-                vertical = vertical, lineHeight = lineHeight,
+                vertical = vertical, lineHeight = lineHeight, font = font,
                 x = 0.2f, y = 0.42f, w = 0.6f, h = fs * 3f + 0.04f
             )
             page().items.add(item)
@@ -1602,11 +1602,11 @@ class EditorActivity : AppCompatActivity() {
     private fun editItem(it: Item) {
         when (it.type) {
             Item.TYPE_TEXT -> TextDialog.show(this, it.text, it.fontScale, it.color,
-                it.bold, it.italic, it.align, it.vertical, it.lineHeight) { text, fs, color, bold, italic, align, vertical, lineHeight ->
+                it.bold, it.italic, it.align, it.vertical, it.lineHeight, it.font) { text, fs, color, bold, italic, align, vertical, lineHeight, font ->
                 beginDiscreteChange()
                 it.text = text; it.fontScale = fs; it.color = color
                 it.bold = bold; it.italic = italic; it.align = align
-                it.vertical = vertical; it.lineHeight = lineHeight
+                it.vertical = vertical; it.lineHeight = lineHeight; it.font = font
                 canvas.fitText(it)
                 canvas.invalidate(); scheduleSave()
             }

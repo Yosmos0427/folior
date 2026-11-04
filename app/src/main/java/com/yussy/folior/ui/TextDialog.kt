@@ -15,8 +15,10 @@ object TextDialog {
         initialText: String, initialFontScale: Float, initialColor: String,
         initialBold: Boolean, initialItalic: Boolean, initialAlign: Int,
         initialVertical: Boolean = false, initialLineHeight: Float = 1.4f,
+        initialFont: String = "",
         onDone: (text: String, fontScale: Float, color: String, bold: Boolean,
-                 italic: Boolean, align: Int, vertical: Boolean, lineHeight: Float) -> Unit
+                 italic: Boolean, align: Int, vertical: Boolean, lineHeight: Float,
+                 font: String) -> Unit
     ) {
         val pad = (16 * ctx.resources.displayMetrics.density).toInt()
         val root = LinearLayout(ctx).apply {
@@ -51,6 +53,23 @@ object TextDialog {
         }
         row1.addView(colorBtn)
         root.addView(row1)
+
+        // 字体：点开出列表，按钮自身用所选字体渲染，改完立刻看得出效果
+        var fontId = initialFont
+        val fontBtn = TextView(ctx).apply {
+            text = "字体：" + Fonts.displayName(fontId)
+            setPadding(0, 24, 0, 8)
+            setTextColor(0xFFB5442A.toInt())
+            typeface = Fonts.typeface(ctx, fontId)
+            setOnClickListener {
+                FontPickerDialog.show(ctx, fontId) { id ->
+                    fontId = id
+                    text = "字体：" + Fonts.displayName(id)
+                    typeface = Fonts.typeface(ctx, id)
+                }
+            }
+        }
+        root.addView(fontBtn)
 
         val row2 = LinearLayout(ctx).apply { orientation = LinearLayout.HORIZONTAL }
         var bold = initialBold; var italic = initialItalic; var align = initialAlign
@@ -89,7 +108,7 @@ object TextDialog {
                 val fs = (fontInput.text.toString().toFloatOrNull() ?: 40f) / 1000f
                 onDone(input.text.toString(), fs.coerceIn(0.005f, 0.5f),
                     colorBtn.tag as? String ?: "#1A1A18", bold, italic, align,
-                    vertical, lineHeight)
+                    vertical, lineHeight, fontId)
             }
             .setNegativeButton("取消", null)
             .show()

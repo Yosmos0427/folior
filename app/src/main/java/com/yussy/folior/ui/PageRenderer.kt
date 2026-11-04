@@ -170,8 +170,9 @@ object PageRenderer {
                 val tp = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.LINEAR_TEXT_FLAG)
                 tp.color = parseColor(item.color, Color.BLACK)
                 tp.textSize = item.fontScale * hPx
-                tp.isFakeBoldText = item.bold
+                tp.isFakeBoldText = item.bold && !Fonts.hasBold(item.font)
                 tp.textSkewX = if (item.italic) -0.25f else 0f
+                Fonts.typeface(ctx, item.font, item.bold)?.let { tp.typeface = it }
                 val alignment = when (item.align) {
                     1 -> android.text.Layout.Alignment.ALIGN_CENTER
                     2 -> android.text.Layout.Alignment.ALIGN_OPPOSITE
@@ -249,17 +250,18 @@ object PageRenderer {
 
     // ---------------- 文字测量与竖排 ----------------
 
-    private fun textPaintOf(item: Item, pageHPx: Float): TextPaint =
+    private fun textPaintOf(item: Item, pageHPx: Float, ctx: Context?): TextPaint =
         TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.LINEAR_TEXT_FLAG).apply {
             color = parseColor(item.color, Color.BLACK)
             textSize = item.fontScale * pageHPx
             isFakeBoldText = item.bold
             textSkewX = if (item.italic) -0.25f else 0f
+            Fonts.typeface(ctx, item.font)?.let { typeface = it }
         }
 
     /** 横排：给定内容宽(px)返回所需内容高(px)。 */
-    fun textLayoutHeightPx(item: Item, wPx: Float, pageHPx: Float): Float {
-        val tp = textPaintOf(item, pageHPx)
+    fun textLayoutHeightPx(item: Item, wPx: Float, pageHPx: Float, ctx: Context? = null): Float {
+        val tp = textPaintOf(item, pageHPx, ctx)
         val layoutW = wPx.coerceAtLeast(tp.textSize)
         val sl = android.text.StaticLayout.Builder
             .obtain(item.text, 0, item.text.length, tp, layoutW.toInt().coerceAtLeast(1))
