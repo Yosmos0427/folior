@@ -3,6 +3,7 @@ package com.yussy.folior
 import android.content.res.Configuration
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.os.Bundle
 import android.os.Handler
@@ -479,7 +480,10 @@ class ViewerActivity : AppCompatActivity() {
         val vw = viewer.width.toFloat()
         val vh = viewer.height.toFloat()
         val d = resources.displayMetrics.density
-        val gutter = 1.5f * d
+        // 无书脊时两页纸面直接相接，不留任何缝——与工作台一致（Prefs.spineGapDp 为 0）。
+        // 其余样式在放映里留一道细缝即可：放映不画书脊纹理，缝宽了中间反而空一块。
+        val seamless = Prefs.spineStyle(this) == Prefs.SPINE_NONE
+        val gutter = if (seamless) 0f else 1.5f * d
 
         val availW = vw * 0.94f - gutter
         val halfW = availW / 2f
@@ -579,8 +583,36 @@ class ViewerActivity : AppCompatActivity() {
         edge.style = Paint.Style.STROKE
         edge.strokeWidth = Math.max(1f, d * 0.6f)
         edge.color = 0x33FFFFFF
-        leftRect?.let { c.drawRect(it, edge) }
-        rightRect?.let { c.drawRect(it, edge) }
+        // 无书脊且两页等齐时，纸面连成一整片：中间不描分隔线，只描整本书的外缘。
+        // （页高不一致时保留各自描边，否则中间会缺一段线。）
+        val flush = Prefs.spineStyle(this) == Prefs.SPINE_NONE &&
+                leftRect != null && rightRect != null &&
+                abs(leftRect.top - rightRect.top) < 0.5f &&
+                abs(leftRect.bottom - rightRect.bottom) < 0.5f
+        if (flush) {
+            strokeOpenEdge(c, leftRect!!, openRight = true, edge)
+            strokeOpenEdge(c, rightRect!!, openRight = false, edge)
+        } else {
+            leftRect?.let { c.drawRect(it, edge) }
+            rightRect?.let { c.drawRect(it, edge) }
+        }
+    }
+
+    /** 描三条边，把朝向邻页的那条留空（书脊处不再分隔）。 */
+    private fun strokeOpenEdge(c: Canvas, r: RectF, openRight: Boolean, p: Paint) {
+        val path = Path()
+        if (openRight) {
+            path.moveTo(r.right, r.top)
+            path.lineTo(r.left, r.top)
+            path.lineTo(r.left, r.bottom)
+            path.lineTo(r.right, r.bottom)
+        } else {
+            path.moveTo(r.left, r.top)
+            path.lineTo(r.right, r.top)
+            path.lineTo(r.right, r.bottom)
+            path.lineTo(r.left, r.bottom)
+        }
+        c.drawPath(path, p)
     }
 
     private fun drawShadow(c: Canvas, r: RectF) {
