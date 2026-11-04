@@ -732,10 +732,12 @@ class PageCanvas @JvmOverloads constructor(
             val cy = center.y + g.ayMm * pxPerMm
             val on = guideMode && g === activeGuide
             val gp = Paint(Paint.ANTI_ALIAS_FLAG)
-            gp.color = if (on) 0xF02F7C8C.toInt() else 0x8C2F7C8C.toInt()
+            // 黑线：编辑中的那条实心，其余压到半透明，避免多条线糊成一片
+            gp.color = if (on) 0xFF000000.toInt() else 0x73000000
             gp.strokeWidth = (if (on) 2f else 1.2f) * d / viewScale
             canvas.drawLine(cx - ux * len, cy - uy * len, cx + ux * len, cy + uy * len, gp)
-            if (guideMode) {
+            // 旋转手柄只给当前线，多条线时不至于满屏圆点
+            if (on) {
                 val hr = 9f * d / viewScale
                 val off = 120f * d / viewScale
                 val hp = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -745,7 +747,7 @@ class PageCanvas @JvmOverloads constructor(
                 canvas.drawCircle(cx - ux * off, cy - uy * off, hr, hp)
                 hp.style = Paint.Style.STROKE
                 hp.strokeWidth = 2f * d / viewScale
-                hp.color = if (on) 0xFF2F7C8C.toInt() else 0xAA2F7C8C.toInt()
+                hp.color = 0xFF000000.toInt()
                 canvas.drawCircle(cx + ux * off, cy + uy * off, hr, hp)
                 canvas.drawCircle(cx - ux * off, cy - uy * off, hr, hp)
             }
@@ -794,14 +796,32 @@ class PageCanvas @JvmOverloads constructor(
     /** 进入 / 退出指示线模式。进入时若还没有线，先放一条水平的。 */
     fun editGuides(on: Boolean) {
         if (on && project?.guides.isNullOrEmpty()) addGuide()
-        if (!on) activeGuide = null
+        // 进入时把最近加的那条设为当前线，手柄立刻可见；点别的线可以换
+        if (on) activeGuide = project?.guides?.lastOrNull() else activeGuide = null
         guideMode = on
         invalidate()
     }
 
+    /** 当前的线数 / 有没有可删的线（Activity 据此启用菜单项） */
+    val guideCount: Int get() = project?.guides?.size ?: 0
+
+    /**
+     * 加一条线。新线错开摆放——否则几条线完全重叠，看着仍像只有一条。
+     * 相邻间距 20mm，超出页高就翻到另一侧，最多试 32 个位置。
+     */
     fun addGuide(): Guide? {
         val p = project ?: return null
-        val g = Guide(angle = 0f, axMm = 0f, ayMm = 0f)
+        val h = currentPage()?.heightMm(p) ?: 297f
+        val step = 20f
+        var ay = 0f
+        var guard = 0
+        while (guard++ < 32 && p.guides.any {
+                abs(normalizeGuideAngle(it.angle)) < 1f && abs(it.ayMm - ay) < step * 0.5f
+            }) {
+            ay -= step
+            if (ay < -h / 2f) ay = h / 2f
+        }
+        val g = Guide(angle = 0f, axMm = 0f, ayMm = ay)
         p.guides.add(g)
         activeGuide = g
         onGuidesChanged?.invoke()
@@ -809,9 +829,10 @@ class PageCanvas @JvmOverloads constructor(
         return g
     }
 
+    /** 删掉当前选中的线；没有选中就删最后加的那条。 */
     fun removeActiveGuide(): Boolean {
         val p = project ?: return false
-        val g = activeGuide ?: return false
+        val g = activeGuide ?: p.guides.lastOrNull() ?: return false
         p.guides.removeAll { it === g }
         activeGuide = null
         onGuidesChanged?.invoke()
@@ -914,6 +935,7 @@ class PageCanvas @JvmOverloads constructor(
         val lineTol = 16f * d / viewScale
         val cx0 = center.x; val cy0 = center.y
         for (g in p.guides.reversed()) {
+            if (g !== activeGuide) continue      // 手柄只在当前线上显示
             val rad = Math.toRadians(g.angle.toDouble())
             val ux = cos(rad).toFloat(); val uy = sin(rad).toFloat()
             val cx = cx0 + g.axMm * pxPerMm; val cy = cy0 + g.ayMm * pxPerMm

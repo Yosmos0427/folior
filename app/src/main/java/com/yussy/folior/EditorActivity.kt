@@ -45,6 +45,7 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var quickActions: LinearLayout
     private lateinit var quickA: TextView
     private lateinit var quickB: TextView
+    private lateinit var quickC: TextView
     private var quickOpen = false
     private lateinit var sideStripWrap: LinearLayout
     private lateinit var bottomStripWrap: LinearLayout
@@ -134,6 +135,10 @@ class EditorActivity : AppCompatActivity() {
         setTextColor(0xFF1A1A18.toInt())
         gravity = Gravity.CENTER
         setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
+        // 单行：宽度不定时系统会按可用宽度折行，两个字也能断成上下两截
+        maxLines = 1
+        isSingleLine = true
+        setHorizontallyScrolling(true)
         background = GradientDrawable().apply {
             cornerRadius = dp(16f).toFloat()
             setColor(0xFFFFFFFF.toInt())
@@ -156,24 +161,36 @@ class EditorActivity : AppCompatActivity() {
     private fun updateQuickMenu() {
         if (!::quickA.isInitialized) return
         if (canvas.guideMode) {
+            // 编辑态：完成 / 添加 / 删除
             quickA.text = "完成"
+            quickA.visibility = View.VISIBLE
             quickA.setOnClickListener {
                 setQuickOpen(false)
                 canvas.editGuides(false)
                 updateBars()
             }
-            quickB.text = "清除"
+            quickB.text = "添加"
             quickB.visibility = View.VISIBLE
             quickB.setOnClickListener {
                 beginDiscreteChange()
-                canvas.clearGuides()          // 清空后退出模式，不会立刻又长出一条
-                canvas.editGuides(false)
-                setQuickOpen(false)
+                canvas.addGuide()
                 scheduleSave()
-                updateBars()
+                setQuickOpen(false)
+            }
+            quickC.text = "删除"
+            quickC.visibility = View.VISIBLE
+            quickC.alpha = if (canvas.guideCount > 0) 1f else 0.4f
+            quickC.setOnClickListener {
+                if (canvas.guideCount == 0) return@setOnClickListener
+                beginDiscreteChange()
+                canvas.removeActiveGuide()
+                scheduleSave()
+                updateQuickMenu()
+                setQuickOpen(false)
             }
         } else {
             quickA.text = "指示线"
+            quickA.visibility = View.VISIBLE
             quickA.setOnClickListener {
                 setQuickOpen(false)
                 if (project.guides.isEmpty()) beginDiscreteChange()
@@ -189,6 +206,7 @@ class EditorActivity : AppCompatActivity() {
                 setQuickOpen(false)
                 openAlignPanel()
             }
+            quickC.visibility = View.GONE
         }
     }
 
@@ -455,12 +473,14 @@ class EditorActivity : AppCompatActivity() {
         }
         quickA = quickAction()
         quickB = quickAction()
+        quickC = quickAction()
         quickActions = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.END
             visibility = View.GONE
             addView(quickA)
             addView(quickB)
+            addView(quickC)
         }
         val quickBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
