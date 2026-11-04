@@ -9,6 +9,7 @@ import android.view.MotionEvent
 import android.view.View
 import com.yussy.folior.model.*
 import com.yussy.folior.store.Prefs
+import com.yussy.folior.store.Store
 import kotlin.math.*
 
 /**
@@ -390,6 +391,19 @@ class PageCanvas @JvmOverloads constructor(
             y += step
         }
         p.shader = null
+    }
+
+    /** 后台补完更清晰的图就重绘一帧（缩放/首帧先给缓存里的近似尺寸） */
+    private val onDecoded = { postInvalidateOnAnimation() }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        Store.addDecodeListener(onDecoded)
+    }
+
+    override fun onDetachedFromWindow() {
+        Store.removeDecodeListener(onDecoded)
+        super.onDetachedFromWindow()
     }
 
     override fun onDraw(canvas: Canvas) {

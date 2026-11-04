@@ -20,13 +20,13 @@ object PageRenderer {
         ctx: Context, project: Project, page: Page,
         canvas: android.graphics.Canvas,
         left: Float, top: Float, wPx: Float, hPx: Float,
-        highQuality: Boolean = false, pxHint: Int? = null
+        highQuality: Boolean = false, pxHint: Int? = null, source: Int = Store.SRC_PROXY
     ) {
         drawPageBackground(project, page, canvas, RectF(left, top, left + wPx, top + hPx))
         val save = canvas.save()
         canvas.clipRect(left, top, left + wPx, top + hPx)
         drawItems(ctx, project, page, canvas, RectF(left, top, left + wPx, top + hPx),
-            highQuality, pxHint)
+            highQuality, pxHint, source = source)
         canvas.restoreToCount(save)
     }
 
@@ -38,7 +38,7 @@ object PageRenderer {
     fun drawPageWithSpill(
         ctx: Context, project: Project, page: Page, index: Int,
         canvas: android.graphics.Canvas, rect: RectF,
-        highQuality: Boolean = false, pxHint: Int? = null
+        highQuality: Boolean = false, pxHint: Int? = null, source: Int = Store.SRC_PROXY
     ) {
         drawPageBackground(project, page, canvas, rect)
         val save = canvas.save()
@@ -46,13 +46,16 @@ object PageRenderer {
         if (project.type == Project.TYPE_BOOK) {
             val n = project.pages.size
             drawSpillFrom(ctx, project, project.pages.getOrNull(leftNeighborOf(index)), page,
-                canvas, rect, toRight = false, highQuality = highQuality, pxHint = pxHint)
+                canvas, rect, toRight = false, highQuality = highQuality, pxHint = pxHint,
+                source = source)
             drawSpillFrom(ctx, project, project.pages.getOrNull(rightNeighborOf(index, n)), page,
-                canvas, rect, toRight = true, highQuality = highQuality, pxHint = pxHint)
-            drawCrossingPhotos(ctx, project, page, canvas, rect, highQuality, pxHint)
-            drawItems(ctx, project, page, canvas, rect, highQuality, pxHint, skipCrossing = true)
+                canvas, rect, toRight = true, highQuality = highQuality, pxHint = pxHint,
+                source = source)
+            drawCrossingPhotos(ctx, project, page, canvas, rect, highQuality, pxHint, source)
+            drawItems(ctx, project, page, canvas, rect, highQuality, pxHint,
+                skipCrossing = true, source = source)
         } else {
-            drawItems(ctx, project, page, canvas, rect, highQuality, pxHint)
+            drawItems(ctx, project, page, canvas, rect, highQuality, pxHint, source = source)
         }
         canvas.restoreToCount(save)
     }
@@ -75,20 +78,20 @@ object PageRenderer {
         ctx: Context, project: Project, page: Page,
         canvas: android.graphics.Canvas, rect: RectF,
         highQuality: Boolean = false, pxHint: Int? = null,
-        skipCrossing: Boolean = false
+        skipCrossing: Boolean = false, source: Int = Store.SRC_PROXY
     ) {
         val isExhibition = project.type == Project.TYPE_EXHIBITION
         // 笔画始终在最底层（页面之上、所有展示物之下），不遮挡照片/文字
         for (item in page.items) {
             if (item.type != Item.TYPE_STROKE) continue
             drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
-                isExhibition, highQuality, pxHint)
+                isExhibition, highQuality, pxHint, source)
         }
         for (item in page.items) {
             if (item.type == Item.TYPE_STROKE) continue
             if (skipCrossing && item.crossesHorizontally()) continue
             drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
-                isExhibition, highQuality, pxHint)
+                isExhibition, highQuality, pxHint, source)
         }
     }
 
@@ -99,13 +102,13 @@ object PageRenderer {
     fun drawCrossingPhotos(
         ctx: Context, project: Project, page: Page,
         canvas: android.graphics.Canvas, rect: RectF,
-        highQuality: Boolean = false, pxHint: Int? = null
+        highQuality: Boolean = false, pxHint: Int? = null, source: Int = Store.SRC_PROXY
     ) {
         val isExhibition = project.type == Project.TYPE_EXHIBITION
         for (item in page.items) {
             if (!item.crossesHorizontally()) continue
             drawItem(ctx, item, canvas, rect.left, rect.top, rect.width(), rect.height(),
-                isExhibition, highQuality, pxHint)
+                isExhibition, highQuality, pxHint, source)
         }
     }
 
@@ -121,7 +124,8 @@ object PageRenderer {
     fun drawSpillFrom(
         ctx: Context, project: Project, neighbor: Page?, page: Page,
         canvas: android.graphics.Canvas, rect: RectF,
-        toRight: Boolean, highQuality: Boolean = false, pxHint: Int? = null
+        toRight: Boolean, highQuality: Boolean = false, pxHint: Int? = null,
+        source: Int = Store.SRC_PROXY
     ) {
         if (neighbor == null) return
         // 只有真的朝本页方向越界时才补绘
@@ -138,7 +142,7 @@ object PageRenderer {
         } ?: nw.toInt()
         val save = canvas.save()
         canvas.clipRect(rect)
-        drawCrossingPhotos(ctx, project, neighbor, canvas, nRect, highQuality, hint)
+        drawCrossingPhotos(ctx, project, neighbor, canvas, nRect, highQuality, hint, source)
         canvas.restoreToCount(save)
     }
 
@@ -146,7 +150,8 @@ object PageRenderer {
         ctx: Context, item: Item,
         canvas: android.graphics.Canvas,
         left: Float, top: Float, wPx: Float, hPx: Float,
-        isExhibition: Boolean, highQuality: Boolean = false, pxHint: Int? = null
+        isExhibition: Boolean, highQuality: Boolean = false, pxHint: Int? = null,
+        source: Int = Store.SRC_PROXY
     ) {
         val cx = left + (item.x + item.w / 2f) * wPx
         val cy = top + (item.y + item.h / 2f) * hPx
@@ -172,7 +177,7 @@ object PageRenderer {
                     fw > 260 -> 1024
                     else -> 512
                 }
-                val bmp = Store.decodeFull(ctx, imgId, maxDim)
+                val bmp = Store.decodeFor(ctx, imgId, maxDim, source)
                 if (bmp == null) {
                     p.color = 0xFFE8E8E2.toInt()
                     canvas.drawRect(fl, fT, fl + fw, fT + fh, p)

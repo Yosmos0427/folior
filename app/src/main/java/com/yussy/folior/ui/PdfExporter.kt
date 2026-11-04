@@ -14,6 +14,7 @@ import com.yussy.folior.model.spillsRight
 import com.yussy.folior.model.leftNeighborOf
 import com.yussy.folior.model.parseColor
 import com.yussy.folior.model.rightNeighborOf
+import com.yussy.folior.store.Store
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
@@ -303,10 +304,13 @@ object PdfExporter {
                 val save = c.save()
                 c.clipRect(pr)
                 // 跨页照片统一在最底层：邻页延伸进来的 + 本页越界出去的
-                PageRenderer.drawSpillFrom(ctx, project, spec.left, spec.page, c, pr, toRight = false)
-                PageRenderer.drawSpillFrom(ctx, project, spec.right, spec.page, c, pr, toRight = true)
-                PageRenderer.drawCrossingPhotos(ctx, project, spec.page, c, pr, true, pw)
-                PageRenderer.drawItems(ctx, project, spec.page, c, pr, true, pw, skipCrossing = true)
+                PageRenderer.drawSpillFrom(ctx, project, spec.left, spec.page, c, pr, toRight = false,
+                    source = Store.SRC_ORIGINAL)
+                PageRenderer.drawSpillFrom(ctx, project, spec.right, spec.page, c, pr, toRight = true,
+                    source = Store.SRC_ORIGINAL)
+                PageRenderer.drawCrossingPhotos(ctx, project, spec.page, c, pr, true, pw, Store.SRC_ORIGINAL)
+                PageRenderer.drawItems(ctx, project, spec.page, c, pr, true, pw,
+                    skipCrossing = true, source = Store.SRC_ORIGINAL)
                 c.restoreToCount(save)
             }
             is Spec.Spread -> {
@@ -326,16 +330,20 @@ object PdfExporter {
                 c.clipRect(0f, 0f, pw.toFloat(), ph.toFloat())
                 // 跨页照片先画：压过中缝，成为一张连续画面；左右两页都可能向外延伸
                 spec.l?.let {
-                    PageRenderer.drawCrossingPhotos(ctx, project, it, c, leftRect, true, (wl * kx).toInt())
+                    PageRenderer.drawCrossingPhotos(ctx, project, it, c, leftRect, true, (wl * kx).toInt(),
+                        Store.SRC_ORIGINAL)
                 }
                 spec.r?.let {
-                    PageRenderer.drawCrossingPhotos(ctx, project, it, c, rightRect, true, (wr * kx).toInt())
+                    PageRenderer.drawCrossingPhotos(ctx, project, it, c, rightRect, true, (wr * kx).toInt(),
+                        Store.SRC_ORIGINAL)
                 }
                 spec.l?.let {
-                    PageRenderer.drawItems(ctx, project, it, c, leftRect, true, (wl * kx).toInt(), skipCrossing = true)
+                    PageRenderer.drawItems(ctx, project, it, c, leftRect, true, (wl * kx).toInt(),
+                        skipCrossing = true, source = Store.SRC_ORIGINAL)
                 }
                 spec.r?.let {
-                    PageRenderer.drawItems(ctx, project, it, c, rightRect, true, (wr * kx).toInt(), skipCrossing = true)
+                    PageRenderer.drawItems(ctx, project, it, c, rightRect, true, (wr * kx).toInt(),
+                        skipCrossing = true, source = Store.SRC_ORIGINAL)
                 }
                 c.restore()
             }

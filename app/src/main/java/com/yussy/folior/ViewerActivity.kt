@@ -16,6 +16,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.yussy.folior.model.*
 import com.yussy.folior.model.Project
+import com.yussy.folior.store.Prefs
 import com.yussy.folior.store.Store
 import com.yussy.folior.ui.PageRenderer
 import kotlin.math.abs
@@ -50,6 +51,10 @@ class ViewerActivity : AppCompatActivity() {
     /** 当前倍数是不是"照片原始像素 1:1"算出来的（决定标签写 100% 还是 ×N） */
     private var zoomIsNative = false
 
+    /** 放映取图来源：原图 / 工作图（全局设置） */
+    private var src = Store.SRC_ORIGINAL
+    private val onDecoded = { viewer.invalidate() }
+
     // ---- 点击 / 双击判定 ----
     private val ui = Handler(Looper.getMainLooper())
     private var pendingTap: Runnable? = null
@@ -77,6 +82,9 @@ class ViewerActivity : AppCompatActivity() {
         if (project.pages.isEmpty()) { finish(); return }
         // 进入放映默认定位到编辑器当前页
         pageIndex = (intent.getIntExtra("page", 0)).coerceIn(0, project.pages.size - 1)
+        src = if (Prefs.viewerSource(this) == Prefs.VIEWER_PROXY) Store.SRC_PROXY
+        else Store.SRC_ORIGINAL
+        Store.addDecodeListener(onDecoded)
 
         label = TextView(this).apply {
             textSize = 12.5f
@@ -215,9 +223,53 @@ class ViewerActivity : AppCompatActivity() {
         scrubber.frac = if (project.pages.size > 1)
             pageIndex.toFloat() / (project.pages.size - 1) else 0f
         updateLabel()
+        prefetchAroundDelayed()
     }
 
     // ---------------- 点击 / 缩放 ----------------
+
+    // ---------------- 预取 ----------------
+
+    private val prefetchTick = Runnable { prefetchAround() }
+
+    private fun prefetchAroundDelayed() {
+        ui.removeCallbacks(prefetchTick)
+        ui.postDelayed(prefetchTick, 220)
+    }
+
+    /**
+     * 把当前页与前后页的照片，按「现在这个倍数需要的尺寸」提前解码好。
+     * 翻页和双击放大时就不必在 onDraw 里同步解码，卡顿感主要来自这里。
+     */
+    private fun prefetchAround() {
+        if (!::viewer.isInitialized) return
+        if (viewer.width <= 0) return
+        val pageW = if (isSpreadMode()) layoutSpread().halfW else singleRect().width()
+        if (pageW <= 0f) return
+        val hint = pageW * zoom
+        val targets = ArrayList<Int>()
+        if (isSpreadMode()) {
+            val list = spreads()
+            val cur = currentSpread()
+            val idx = list.indexOfFirst { it.first == cur.first && it.second == cur.second }
+            for (k in intArrayOf(idx - 1, idx, idx + 1)) {
+                list.getOrNull(k)?.let { targets.add(it.first); targets.add(it.second) }
+            }
+        } else {
+            targets.add(pageIndex - 1)
+            targets.add(pageIndex)
+            targets.add(pageIndex + 1)
+        }
+        for (i in targets) {
+            if (i < 0 || i >= project.pages.size) continue
+            for (item in project.pages[i].items) {
+                if (item.type != Item.TYPE_PHOTO) continue
+                val imgId = item.imgId ?: continue
+                val dim = (item.w * hint).toInt().coerceIn(320, 4200)
+                Store.requestDecode(this, imgId, dim, src)
+            }
+        }
+    }
 
     /** 单击延时执行：留够双击窗口，避免"想放大却先翻了一页"。 */
     private fun scheduleTap(x: Float) {
@@ -245,6 +297,7 @@ class ViewerActivity : AppCompatActivity() {
         clampPan()
         updateLabel()
         viewer.invalidate()
+        prefetchAroundDelayed()
     }
 
     private fun resetZoom() {
@@ -334,6 +387,8 @@ class ViewerActivity : AppCompatActivity() {
     override fun onDestroy() {
         pendingTap?.let { ui.removeCallbacks(it) }
         pendingTap = null
+        ui.removeCallbacksAndMessages(null)
+        Store.removeDecodeListener(onDecoded)
         super.onDestroy()
     }
 
@@ -380,6 +435,7 @@ class ViewerActivity : AppCompatActivity() {
         scrubber.invalidate()
         updateLabel()
         viewer.invalidate()
+        prefetchAroundDelayed()
     }
 
     private fun updateLabel() {
@@ -472,7 +528,7 @@ class ViewerActivity : AppCompatActivity() {
         // 单页放映也带上跨页照片：邻页溢入本页的那一半照常补上，
         // 与横屏摊开时这一页所见一致
         PageRenderer.drawPageWithSpill(this, project, page, pageIndex, c, rect,
-            highQuality = hq, pxHint = hint)
+            highQuality = hq, pxHint = hint, source = src)
     }
 
     private fun drawSpread(c: Canvas, hq: Boolean) {
@@ -503,14 +559,16 @@ class ViewerActivity : AppCompatActivity() {
         li.takeIf { it >= 0 }?.let { i ->
             leftRect?.let { r ->
                 project.pages.getOrNull(i)?.let {
-                    PageRenderer.drawItems(this, project, it, c, r, highQuality = hq, pxHint = hintL)
+                    PageRenderer.drawItems(this, project, it, c, r, highQuality = hq,
+                        pxHint = hintL, source = src)
                 }
             }
         }
         ri.takeIf { it >= 0 }?.let { i ->
             rightRect?.let { r ->
                 project.pages.getOrNull(i)?.let {
-                    PageRenderer.drawItems(this, project, it, c, r, highQuality = hq, pxHint = hintL)
+                    PageRenderer.drawItems(this, project, it, c, r, highQuality = hq,
+                        pxHint = hintL, source = src)
                 }
             }
         }

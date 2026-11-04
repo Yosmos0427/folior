@@ -3,10 +3,11 @@ package com.yussy.folior.store
 import android.content.Context
 
 /**
- * 全局设置（跨项目共享）：PDF 导出精度与体积上限。
- * 两项设置相互独立：
+ * 全局设置（跨项目共享）：书脊样式、放映画质、PDF 导出精度与体积上限、预览图导出。
+ * 各项相互独立：
  *  - 精度：决定渲染分辨率（轻量 72 / 标准 192 / 精细 300 / 自定义）
  *  - 体积上限：导出后的目标体积（默认无上限）
+ *  - 放映画质：原图 / 工作图
  * SharedPreferences 存储，改动即时生效，无需保存按钮。
  */
 object Prefs {
@@ -24,6 +25,7 @@ object Prefs {
     private const val K_PREVIEW_BG = "preview_bg_color"
     private const val K_PREVIEW_KEEP_BLANK = "preview_keep_blank"
     private const val K_SPINE = "spread_spine_style"
+    private const val K_VIEWER_SRC = "viewer_image_source"
 
     private fun sp(c: Context) = c.getSharedPreferences(NAME, Context.MODE_PRIVATE)
 
@@ -109,5 +111,18 @@ object Prefs {
         SPINE_STITCH -> 12f
         SPINE_RING -> 16f
         else -> 3f
+    }
+
+    // ---------------- 放映画质 ----------------
+
+    /** 原图 = 按原始像素解码（细节最足，翻页与放大更吃内存/时间）；缩略图 = 工作图 */
+    const val VIEWER_ORIGINAL = "original"
+    const val VIEWER_PROXY = "proxy"
+
+    fun viewerSource(c: Context): String =
+        sp(c).getString(K_VIEWER_SRC, VIEWER_ORIGINAL) ?: VIEWER_ORIGINAL
+
+    fun setViewerSource(c: Context, src: String) {
+        sp(c).edit().putString(K_VIEWER_SRC, src).apply()
     }
 }

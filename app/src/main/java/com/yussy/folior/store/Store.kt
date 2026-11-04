@@ -89,12 +89,20 @@ object Store {
         val meta = loadMeta(c)
         var metaDirty = false
         imagesDir(c).listFiles()?.forEach { f ->
+            if (f.isDirectory) return@forEach
             val name = f.name
             if (name == "meta.json") return@forEach
             val id = name.substringBeforeLast('.')
             if (id !in referenced) {
                 if (f.delete()) removed++
                 if (meta.remove(id) != null) metaDirty = true
+            }
+        }
+        // 工作图（proxy）跟随原图存亡
+        proxyDir(c).listFiles()?.forEach { f ->
+            if (!f.isFile) return@forEach
+            if (f.name.substringBeforeLast('.') !in referenced) {
+                if (f.delete()) removed++
             }
         }
         if (metaDirty) saveMeta(c)
@@ -175,6 +183,7 @@ object Store {
                     val out = File(dir, "$id.$ext")
                     if (copyBytes(cr, uri, out)) {
                         putPhotoMeta(c, id, ow, oh, ppi)
+                        ensureProxy(c, id)          // 顺手备好工作图，之后编辑/放映都不用等
                         return id
                     }
                     out.delete()
@@ -197,6 +206,7 @@ object Store {
             if (upright !== bmp) upright.recycle()
             bmp.recycle()
             putPhotoMeta(c, id, ow, oh, ppi)
+            ensureProxy(c, id)
             id
         } catch (e: Exception) { null }
     }
@@ -325,45 +335,223 @@ object Store {
         return Triple(opts.outWidth, opts.outHeight, 300f)
     }
 
-    // 内存位图缓存：按字节计量（48MB 上限），整图与缩略图共用；
-    // 此前按"张数(64)"计量，大量大图时可能堆爆。
-    private val memCache = object : LruCache<String, Bitmap>(48 * 1024 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap) = value.byteCount.coerceAtLeast(1)
+    // ---------------- 工作图（proxy）与解码 ----------------
+
+    /** 解码源：工作图（中等尺寸 JPEG 副本）/ 原始文件 */
+    const val SRC_PROXY = 0
+    const val SRC_ORIGINAL = 1
+
+    /** 工作图长边上限。原图本身不超过这个尺寸时直接用原图，不另存副本。 */
+    private const val PROXY_MAX_DIM = 1600
+    private const val PROXY_QUALITY = 88
+
+    fun proxyDir(c: Context): File = File(imagesDir(c), "proxy").apply { mkdirs() }
+
+    fun proxyFile(c: Context, imgId: String): File = File(proxyDir(c), "$imgId.jpg")
+
+    private val proxyLocks = java.util.concurrent.ConcurrentHashMap<String, Any>()
+
+    /**
+     * 生成（或复用）工作图。原图本身就不大时直接返回原图，不多存一份。
+     * 生成失败也返回原图——宁可慢一点，不能没有。
+     * 锁按 imgId 分开：导入时多张并行生成互不排队。
+     */
+    fun ensureProxy(c: Context, imgId: String): File? {
+        val orig = imageFile(c, imgId) ?: return null
+        val f = proxyFile(c, imgId)
+        if (f.exists() && f.length() > 0L) return f
+        val lock = proxyLocks.computeIfAbsent(imgId) { Any() }
+        synchronized(lock) {
+            if (f.exists() && f.length() > 0L) return f
+            val b = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(orig.absolutePath, b)
+            if (b.outWidth in 1..PROXY_MAX_DIM && b.outHeight in 1..PROXY_MAX_DIM) return orig
+            val bmp = decodeSampled(orig, PROXY_MAX_DIM) ?: return orig
+            return try {
+                FileOutputStream(f).use { bmp.compress(Bitmap.CompressFormat.JPEG, PROXY_QUALITY, it) }
+                if (f.length() > 0L) f else orig
+            } catch (_: Exception) {
+                f.delete(); orig
+            } finally {
+                bmp.recycle()
+            }
+        }
     }
 
-    /** 通用下采样解码（先读尺寸算 sample，再真正解码）。OOM 返回 null 由调用方降档。 */
-    private fun decodeSampled(f: File, maxDim: Int): Bitmap? = try {
+    // 三份缓存分开计量：一张原图动辄 30–60MB，混在一起会把缩略图整片挤掉，
+    // 于是每次刷新都重新解码，越翻越卡。
+    private fun sizeOfBitmap(key: String, value: Bitmap) = value.byteCount.coerceAtLeast(1)
+
+    // 上限按可用堆分配：large 必须能装下「一张 24MP 原图」（约 96MB），
+    // 否则放进去立刻被淘汰，等于每一帧都重新解码——越放大越卡就是这么来的。
+    private val heapMb = (Runtime.getRuntime().maxMemory() / (1024 * 1024)).toInt()
+    private val memThumb = object : LruCache<String, Bitmap>(
+        (heapMb / 32).coerceIn(8, 16) * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = sizeOfBitmap(key, value)
+    }
+    private val memWork = object : LruCache<String, Bitmap>(
+        (heapMb / 6).coerceIn(24, 64) * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = sizeOfBitmap(key, value)
+    }
+    private val memLarge = object : LruCache<String, Bitmap>(
+        (heapMb / 3).coerceIn(96, 160) * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap) = sizeOfBitmap(key, value)
+    }
+
+    private fun cacheFor(src: Int) = if (src == SRC_ORIGINAL) memLarge else memWork
+
+    private fun cacheKey(imgId: String, maxDim: Int, src: Int, prefix: String) =
+        "$prefix$imgId@$maxDim@$src"
+
+    /**
+     * 通用下采样解码（先读尺寸算 sample，再真正解码）。OOM 返回 null 由调用方降档。
+     *
+     * 除了长边，还卡一道像素总量：5000 万像素的手机原图按长边算出来是 8160px，
+     * 一次解码就要 200MB，会直接把进程打崩。超过 [maxPixels] 时再减半一级。
+     */
+    private fun decodeSampled(f: File, maxDim: Int, maxPixels: Long = 24_000_000L): Bitmap? = try {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(f.absolutePath, bounds)
         var sample = 1
         while (bounds.outWidth / (sample * 2) >= maxDim || bounds.outHeight / (sample * 2) >= maxDim) sample *= 2
+        while ((bounds.outWidth.toLong() / sample) * (bounds.outHeight.toLong() / sample) > maxPixels) sample *= 2
         BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
     } catch (_: OutOfMemoryError) { null } catch (e: Exception) { null }
 
-    /** 解码整图（带缓存与下采样），用于画布渲染与 PDF 导出。 */
-    fun decodeFull(c: Context, imgId: String, maxDim: Int = 2048): Bitmap? =
-        decodeCached(c, imgId, maxDim)
+    /** 工作图文件；还没生成时先用原图顶上，并把生成任务丢给后台。 */
+    private fun workFileFor(c: Context, imgId: String): File? {
+        val f = proxyFile(c, imgId)
+        if (f.exists() && f.length() > 0L) return f
+        val orig = imageFile(c, imgId) ?: return null
+        if (!inFlight.add("proxy:$imgId")) return orig
+        val app = c.applicationContext
+        decodePool.execute {
+            try { ensureProxy(app, imgId) } catch (_: Throwable) {
+            } finally { inFlight.remove("proxy:$imgId") }
+        }
+        return orig
+    }
 
-    /** 解码缩略图（独立 key 空间），用于页面条。 */
-    fun decodeThumb(c: Context, imgId: String, maxDim: Int = 320): Bitmap? =
-        decodeCached(c, imgId, maxDim, prefix = "t")
-
-    @Synchronized
-    private fun decodeCached(c: Context, imgId: String, maxDim: Int, prefix: String = ""): Bitmap? {
-        val key = "$prefix$imgId@$maxDim"
-        memCache.get(key)?.let { return it }
-        val f = imageFile(c, imgId) ?: return null
+    private fun decodeImage(
+        c: Context, imgId: String, maxDim: Int, src: Int,
+        cache: LruCache<String, Bitmap> = cacheFor(src), prefix: String = ""
+    ): Bitmap? {
+        val key = cacheKey(imgId, maxDim, src, prefix)
+        cache.get(key)?.let { return it }
+        val f: File = (if (src == SRC_ORIGINAL) imageFile(c, imgId) else workFileFor(c, imgId))
+            ?: return null
         // 目标尺寸解不出来（多为 OOM）就逐级减半，宁可略糊也不要空块
         var dim = maxDim
         while (dim >= 256) {
             val bmp = decodeSampled(f, dim)
             if (bmp != null) {
-                if (bmp.width.coerceAtLeast(bmp.height) <= maxDim) memCache.put(key, bmp)
+                if (bmp.width.coerceAtLeast(bmp.height) <= maxDim) cache.put(key, bmp)
                 return bmp
             }
             dim /= 2
         }
         return null
+    }
+
+    /**
+     * 缓存里同一张图 ≤ maxDim 的最大的那一版，没有则 null。
+     * 用 snapshot 而不是固定档位查表——渲染请求的尺寸是任意整数（按元素占版宽度算出来的）。
+     */
+    private fun bestCached(
+        cache: LruCache<String, Bitmap>, imgId: String, maxDim: Int, src: Int, prefix: String = ""
+    ): Bitmap? {
+        val tag = "$prefix$imgId@"
+        var best: Bitmap? = null
+        var bestDim = -1
+        for ((k, v) in cache.snapshot()) {
+            if (!k.startsWith(tag) || !k.endsWith("@$src")) continue
+            val d = k.removePrefix(tag).substringBeforeLast('@').toIntOrNull() ?: continue
+            if (d <= maxDim && d > bestDim) { bestDim = d; best = v }
+        }
+        return best
+    }
+
+    /**
+     * 取图（带缓存）。
+     * - 目标尺寸已缓存 → 直接给
+     * - 只有更小的版本 → **先给小的，后台补大的**（缩放时不卡，随后自动刷新一次）
+     * - 什么都没有 → 同步解码，保证第一帧就是对的
+     */
+    /**
+     * 工作图只有两档：小图 640、全图 1600。请求按档归一，否则编辑区按元素宽度算出来的
+     * 1024 / 2048 会把同一张 1600 的解码结果各存一份，缓存白白翻倍。
+     */
+    private fun normDim(maxDim: Int, src: Int): Int =
+        if (src != SRC_PROXY) maxDim
+        else if (maxDim <= 640) 640 else PROXY_MAX_DIM
+
+    fun decodeFor(c: Context, imgId: String, maxDim0: Int, src0: Int): Bitmap? {
+        // 需要的像素没超过工作图时，读原图是白费力气：放映「适应屏幕」只要 800px 上下，
+        // 工作图 1600 已经够了。只有放大到 1600 以上才真的动原图。
+        val src = if (src0 == SRC_ORIGINAL && maxDim0 <= PROXY_MAX_DIM) SRC_PROXY else src0
+        val maxDim = normDim(maxDim0, src)
+        val cache = cacheFor(src)
+        cache.get(cacheKey(imgId, maxDim, src, ""))?.let { return it }
+        val smaller = bestCached(cache, imgId, maxDim, src)
+        if (smaller != null) {
+            requestDecode(c, imgId, maxDim, src)
+            return smaller
+        }
+        // 放映要原图、但原图还没解过：先用工作图那版顶上，别让屏幕空等一下
+        if (src == SRC_ORIGINAL) {
+            bestCached(memWork, imgId, maxDim, SRC_PROXY)?.let {
+                requestDecode(c, imgId, maxDim, src)
+                return it
+            }
+        }
+        return decodeImage(c, imgId, maxDim, src)
+    }
+
+    /** 兼容旧调用：默认走工作图。 */
+    fun decodeFull(c: Context, imgId: String, maxDim: Int = 2048): Bitmap? =
+        decodeFor(c, imgId, maxDim, SRC_PROXY)
+
+    /** 缩略图（独立缓存，不被大图挤掉）。 */
+    fun decodeThumb(c: Context, imgId: String, maxDim: Int = 320): Bitmap? {
+        memThumb.get(cacheKey(imgId, maxDim, SRC_PROXY, "t"))?.let { return it }
+        return decodeImage(c, imgId, maxDim, SRC_PROXY, memThumb, "t")
+    }
+
+    // ---- 后台解码：不占 UI 线程，完成后通知订阅者重绘 ----
+
+    private val decodePool = java.util.concurrent.Executors.newFixedThreadPool(2)
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val inFlight: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
+    private val decodeListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+    fun addDecodeListener(l: () -> Unit) {
+        if (l !in decodeListeners) decodeListeners.add(l)
+    }
+
+    fun removeDecodeListener(l: () -> Unit) {
+        decodeListeners.remove(l)
+    }
+
+    fun requestDecode(c: Context, imgId: String, maxDim0: Int, src0: Int) {
+        val src = if (src0 == SRC_ORIGINAL && maxDim0 <= PROXY_MAX_DIM) SRC_PROXY else src0
+        val maxDim = normDim(maxDim0, src)
+        val key = cacheKey(imgId, maxDim, src, "")
+        if (!inFlight.add(key)) return
+        val app = c.applicationContext
+        decodePool.execute {
+            try {
+                decodeImage(app, imgId, maxDim, src)
+            } catch (_: Throwable) {
+            } finally {
+                inFlight.remove(key)
+            }
+            mainHandler.post { decodeListeners.forEach { it() } }
+        }
+    }
+
+    /** 预取：翻页/放大前先把目标页的图解码好，翻过去就不用等。 */
+    fun prefetch(c: Context, imgIds: Collection<String>, maxDim: Int, src: Int) {
+        for (id in imgIds) requestDecode(c, id, maxDim, src)
     }
 
     // ---------- .folio 包（zip）导出 / 导入 ----------

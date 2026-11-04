@@ -33,6 +33,8 @@ class SettingsActivity : AppCompatActivity() {
     private val limitChecks = ArrayList<Pair<Int, TextView>>()
     /** 书脊样式 → 勾选标记 */
     private val spineChecks = ArrayList<Pair<String, TextView>>()
+    /** 放映图片源 → 勾选标记 */
+    private val viewerChecks = ArrayList<Pair<String, TextView>>()
 
     private companion object {
         const val LIMIT_NONE = 0
@@ -101,6 +103,12 @@ class SettingsActivity : AppCompatActivity() {
         content.addView(spineRow(Prefs.SPINE_GAP, "留白", "留一条细缝"))
         content.addView(spineRow(Prefs.SPINE_STITCH, "线编", "折痕与交叉缝线"))
         content.addView(spineRow(Prefs.SPINE_RING, "活页", "一列金属环"))
+
+        content.addView(sectionLabel("放映"))
+        content.addView(hint("全屏放映时照片取自哪份文件。工作台与缩略图始终用工作图（长边的 JPEG 副本），改动这里只影响放映。"))
+
+        content.addView(viewerRow(Prefs.VIEWER_ORIGINAL, "原图", "按原始像素解码，双击放大到 100% 能看到真正的细节；翻页与放大会多花一点时间"))
+        content.addView(viewerRow(Prefs.VIEWER_PROXY, "工作图", "用工作台同一份中等尺寸副本，翻页与放大最快，细节到工作图为止"))
 
         content.addView(sectionLabel("PDF 导出"))
         content.addView(hint("导出 PDF 的画质与文件大小，两项设置相互独立。"))
@@ -365,6 +373,15 @@ class SettingsActivity : AppCompatActivity() {
         return row
     }
 
+    private fun viewerRow(source: String, title: String, desc: String): LinearLayout {
+        val (row, _, check) = optionRow(title, desc) {
+            Prefs.setViewerSource(this, source)
+            refresh()
+        }
+        viewerChecks.add(source to check)
+        return row
+    }
+
     private fun spineRow(style: String, title: String, desc: String): LinearLayout {
         val (row, _, check) = optionRow(title, desc) {
             Prefs.setSpineStyle(this, style)
@@ -482,6 +499,15 @@ class SettingsActivity : AppCompatActivity() {
         summary.text = "当前：${Prefs.pdfDpi(this)} dpi · ${Prefs.pdfLimitLabel(this)}"
         updateBlankCheck()
         updateSpineChecks()
+        updateViewerChecks()
+    }
+
+    /** 放映图片源的勾选标记 */
+    private fun updateViewerChecks() {
+        val cur = Prefs.viewerSource(this)
+        viewerChecks.forEach { (src, check) ->
+            check.visibility = if (src == cur) View.VISIBLE else View.INVISIBLE
+        }
     }
 
     /** 书脊样式的勾选标记 */
@@ -522,5 +548,6 @@ class SettingsActivity : AppCompatActivity() {
         summary.text = "当前：${Prefs.pdfDpi(this)} dpi · ${Prefs.pdfLimitLabel(this)}"
         updateBlankCheck()
         updateSpineChecks()
+        updateViewerChecks()
     }
 }
