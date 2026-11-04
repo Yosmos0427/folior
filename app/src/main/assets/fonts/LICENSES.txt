@@ -13,9 +13,6 @@ OFL 允许免费使用、修改与再分发，包括商业用途；再分发时�
   Copyright 2022-2025 LXGW (https://github.com/lxgw/LxgwWenkaiGB)
   Copyright 2020 The Klee Project Authors (https://github.com/fontworks-fonts/Klee)
 
-得意黑（Smiley Sans）
-  Copyright (c) 2022-2024 atelierAnchor. All rights reserved.
-
 EB Garamond
   Copyright 2017 The EB Garamond Project Authors (https://github.com/octaviopardo/EBGaramond12)
 
@@ -25,8 +22,10 @@ Playfair Display
 Inter
   Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter)
 
-Jost
+Jost 400 / 700（应用内显示名「Futura」）
   Copyright 2020 The Jost Project Authors (https://github.com/indestructible-type/Jost)
+  说明：Futura 是 Bauer Types 的商业字体，未随本应用分发。此处随包的是 Jost——
+  Futura 那套 1920 年代几何无衬线设计稿的开源复刻，"Futura" 仅作这一风格的类别名。
 
 Space Mono
   Copyright 2016 The Space Mono Project Authors (https://github.com/googlefonts/spacemono)

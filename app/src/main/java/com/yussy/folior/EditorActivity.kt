@@ -1407,12 +1407,12 @@ class EditorActivity : AppCompatActivity() {
             .create()
         progress.show()
         Thread {
-            // 并行导入：解码 + JPEG 压缩是 CPU 密集型，多线程可显著缩短总耗时
-            // （单线程 20 张约 15–20s → 3 线程约 5–7s）。
+            // 并行导入：原图直拷是纯 IO，需旋正的走解码 + 重编码（CPU 密集）。
+            // 并发压到 2——单张 24MP 位图约 96MB，开太多线程会真的 OOM。
             // 结果按下标回填，保持用户选择的原始顺序。
             val slots = arrayOfNulls<String>(total)
             val done = java.util.concurrent.atomic.AtomicInteger(0)
-            val workers = Runtime.getRuntime().availableProcessors().coerceIn(2, 3)
+            val workers = Runtime.getRuntime().availableProcessors().coerceIn(1, 2)
             val pool = java.util.concurrent.Executors.newFixedThreadPool(workers)
             val latch = java.util.concurrent.CountDownLatch(total)
             uris.forEachIndexed { i, uri ->

@@ -15,17 +15,18 @@ object PageRenderer {
     fun pageBgColor(project: Project, page: Page): Int =
         parseColor(page.bg ?: project.defaultBg, Color.WHITE)
 
-    /** 单页完整绘制（自动裁切到页内）。 */
+    /** 单页完整绘制（自动裁切到页内）。pxHint 见 [drawItems]。 */
     fun drawPage(
         ctx: Context, project: Project, page: Page,
         canvas: android.graphics.Canvas,
         left: Float, top: Float, wPx: Float, hPx: Float,
-        highQuality: Boolean = false
+        highQuality: Boolean = false, pxHint: Int? = null
     ) {
         drawPageBackground(project, page, canvas, RectF(left, top, left + wPx, top + hPx))
         val save = canvas.save()
         canvas.clipRect(left, top, left + wPx, top + hPx)
-        drawItems(ctx, project, page, canvas, RectF(left, top, left + wPx, top + hPx), highQuality)
+        drawItems(ctx, project, page, canvas, RectF(left, top, left + wPx, top + hPx),
+            highQuality, pxHint)
         canvas.restoreToCount(save)
     }
 
@@ -133,9 +134,9 @@ object PageRenderer {
                 val imgId = item.imgId
                 if (imgId == null) { canvas.restore(); return }
                 val maxDim = when {
-                    // 按元素在成品上的实际宽度换算所需像素（300dpi）
-                    pxHint != null -> (item.w * pxHint).toInt().coerceIn(320, 3200)
-                    highQuality -> 3000
+                    // 按元素在成品上的实际宽度换算所需像素（300dpi / 放映 100% 缩放）
+                    pxHint != null -> (item.w * pxHint).toInt().coerceIn(320, 4200)
+                    highQuality -> 3200
                     fw > 900 -> 2048
                     fw > 260 -> 1024
                     else -> 512

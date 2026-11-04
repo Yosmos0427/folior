@@ -103,17 +103,25 @@ object Store {
 
     // ---------- 图片 ----------
 
-    /** 把相册图片复制进私有目录，返回 imgId。带下采样防止超大原图 OOM，并按 EXIF 摆正方向。 */
-    fun importImage(c: Context, uri: Uri, maxDim: Int = 4096): String? {
+    /**
+     * 把相册图片复制进私有目录，返回 imgId。
+     *
+     * 分辨率策略（关系到放映里 100% 缩放能看到的真实细节）：
+     * - 方向正常（EXIF orientation = 1）的图片**直接按原字节复制**，不解码、不重编码，
+     *   像素与画质 100% 原样保留，导出 PDF 与 100% 放映都拿到的是原始数据。
+     * - 需要旋正的图片（竖拍常见）才解码：像素总数超过 [maxPixels] 时按 2 的幂减半，
+     *   旋正后按 JPEG 96 重编码。OOM 时自动再减半重试，不会整张导入失败。
+     * - meta 里记录的始终是**原始像素**（解码前读到的 outWidth/outHeight）与 PPI，
+     *   展览模式按「像素 ÷ PPI」换算实际尺寸时不受减半影响。
+     */
+    fun importImage(c: Context, uri: Uri, maxPixels: Long = 24_000_000L): String? {
         return try {
             val cr = c.contentResolver
-            // 1) 只读尺寸，决定下采样率
-            val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
-            if (opts.outWidth <= 0 || opts.outHeight <= 0) return null
-            var sample = 1
-            while (Math.max(opts.outWidth, opts.outHeight) / (sample * 2) >= maxDim) sample *= 2
-            // 2) 读取 EXIF 方向 + 分辨率（PPI）
+            // 1) 只读尺寸
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            cr.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            // 2) EXIF：方向 + 分辨率（PPI）
             var orientation = ExifInterface.ORIENTATION_NORMAL
             var ppi = 300f
             try {
@@ -146,20 +154,99 @@ object Store {
                     if (ppi < 100f || ppi > 1200f) ppi = 300f
                 }
             } catch (_: Exception) {}
-            // 3) 真正解码
-            val bmp = cr.openInputStream(uri)?.use {
-                BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = sample })
-            } ?: return null
-            val upright = applyExifOrientation(bmp, orientation)
+
             val id = UUID.randomUUID().toString()
-            File(imagesDir(c), "$id.jpg").outputStream().use { fo ->
-                upright.compress(Bitmap.CompressFormat.JPEG, 92, fo)
+            val dir = imagesDir(c)
+            // meta 里的宽高要和磁盘上那张图**一致**：旋正过的宽高互换，
+            // 否则展览摆放与 100% 缩放的换算会横竖颠倒。
+            val swapped = orientation == ExifInterface.ORIENTATION_ROTATE_90 ||
+                    orientation == ExifInterface.ORIENTATION_ROTATE_270 ||
+                    orientation == ExifInterface.ORIENTATION_TRANSPOSE ||
+                    orientation == ExifInterface.ORIENTATION_TRANSVERSE
+            val ow = if (swapped) bounds.outHeight else bounds.outWidth
+            val oh = if (swapped) bounds.outWidth else bounds.outHeight
+
+            // 3) 无需旋正：原字节复制（保真且最快）
+            val uprightBaked = orientation == ExifInterface.ORIENTATION_NORMAL ||
+                    orientation == ExifInterface.ORIENTATION_UNDEFINED
+            if (uprightBaked) {
+                val ext = extensionOf(cr, uri)
+                if (ext != null) {
+                    val out = File(dir, "$id.$ext")
+                    if (copyBytes(cr, uri, out)) {
+                        putPhotoMeta(c, id, ow, oh, ppi)
+                        return id
+                    }
+                    out.delete()
+                }
+            }
+
+            // 4) 需要旋正（或原格式不认识）：解码 → 旋正 → 高质量重编码
+            var budget = maxPixels
+            var bmp: Bitmap? = null
+            while (budget >= 1_000_000L) {
+                bmp = decodeBounded(cr, uri, bounds, budget)
+                if (bmp != null) break
+                budget /= 4          // OOM：再减半采样重试
+            }
+            if (bmp == null) return null
+            val upright = applyExifOrientation(bmp, orientation)
+            File(dir, "$id.jpg").outputStream().use { fo ->
+                upright.compress(Bitmap.CompressFormat.JPEG, 96, fo)
             }
             if (upright !== bmp) upright.recycle()
             bmp.recycle()
-            putPhotoMeta(c, id, opts.outWidth, opts.outHeight, ppi)
+            putPhotoMeta(c, id, ow, oh, ppi)
             id
         } catch (e: Exception) { null }
+    }
+
+    /** 原始字节复制；成功且非空返回 true。 */
+    private fun copyBytes(
+        cr: android.content.ContentResolver, uri: Uri, out: File
+    ): Boolean = try {
+        cr.openInputStream(uri)?.use { ins ->
+            out.outputStream().use { fos -> ins.copyTo(fos) }
+        }
+        out.length() > 0
+    } catch (_: Exception) { false }
+
+    /** 按像素总数预算选 2 的幂采样率解码；OOM 返回 null 由调用方降档。 */
+    private fun decodeBounded(
+        cr: android.content.ContentResolver, uri: Uri,
+        bounds: BitmapFactory.Options, maxPixels: Long
+    ): Bitmap? = try {
+        var sample = 1
+        while ((bounds.outWidth.toLong() / sample) *
+            (bounds.outHeight.toLong() / sample) > maxPixels) sample *= 2
+        cr.openInputStream(uri)?.use {
+            BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            })
+        }
+    } catch (_: OutOfMemoryError) { null } catch (_: Exception) { null }
+
+    /**
+     * 从 mime 或路径推断可识别的扩展名；BitmapFactory 能解、且 imageFile() 会找的才返回。
+     * 认不出来返回 null，交给重编码分支。
+     */
+    private fun extensionOf(cr: android.content.ContentResolver, uri: Uri): String? {
+        val mime = try { cr.getType(uri) } catch (_: Exception) { null }
+        when (mime?.lowercase()) {
+            "image/jpeg", "image/jpg" -> return "jpg"
+            "image/png" -> return "png"
+            "image/webp" -> return "webp"
+            "image/heic", "image/heif" -> return "heic"
+        }
+        val name = uri.lastPathSegment?.lowercase() ?: return null
+        return when {
+            name.endsWith(".jpg") || name.endsWith(".jpeg") -> "jpg"
+            name.endsWith(".png") -> "png"
+            name.endsWith(".webp") -> "webp"
+            name.endsWith(".heic") || name.endsWith(".heif") -> "heic"
+            else -> null
+        }
     }
 
     /** 按 EXIF 方向旋转/翻转到正向，避免竖拍照片导入后躺倒。 */
@@ -181,7 +268,7 @@ object Store {
     }
 
     fun imageFile(c: Context, imgId: String): File? {
-        for (ext in arrayOf("jpg", "jpeg", "png", "webp")) {
+        for (ext in arrayOf("jpg", "jpeg", "png", "webp", "heic", "heif")) {
             val f = File(imagesDir(c), "$imgId.$ext")
             if (f.exists()) return f
         }
@@ -244,14 +331,14 @@ object Store {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount.coerceAtLeast(1)
     }
 
-    /** 通用下采样解码（先读尺寸算 sample，再真正解码）。 */
+    /** 通用下采样解码（先读尺寸算 sample，再真正解码）。OOM 返回 null 由调用方降档。 */
     private fun decodeSampled(f: File, maxDim: Int): Bitmap? = try {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(f.absolutePath, bounds)
         var sample = 1
         while (bounds.outWidth / (sample * 2) >= maxDim || bounds.outHeight / (sample * 2) >= maxDim) sample *= 2
         BitmapFactory.decodeFile(f.absolutePath, BitmapFactory.Options().apply { inSampleSize = sample })
-    } catch (e: Exception) { null }
+    } catch (_: OutOfMemoryError) { null } catch (e: Exception) { null }
 
     /** 解码整图（带缓存与下采样），用于画布渲染与 PDF 导出。 */
     fun decodeFull(c: Context, imgId: String, maxDim: Int = 2048): Bitmap? =
@@ -266,9 +353,17 @@ object Store {
         val key = "$prefix$imgId@$maxDim"
         memCache.get(key)?.let { return it }
         val f = imageFile(c, imgId) ?: return null
-        val bmp = decodeSampled(f, maxDim) ?: return null
-        memCache.put(key, bmp)
-        return bmp
+        // 目标尺寸解不出来（多为 OOM）就逐级减半，宁可略糊也不要空块
+        var dim = maxDim
+        while (dim >= 256) {
+            val bmp = decodeSampled(f, dim)
+            if (bmp != null) {
+                if (bmp.width.coerceAtLeast(bmp.height) <= maxDim) memCache.put(key, bmp)
+                return bmp
+            }
+            dim /= 2
+        }
+        return null
     }
 
     // ---------- .folio 包（zip）导出 / 导入 ----------
@@ -301,11 +396,14 @@ object Store {
         return try {
             val tmpImgs = mutableListOf<Pair<File, String>>()
             var projectJson: String? = null
+            var incomingMeta: JSONObject? = null
             ZipInputStream(input).use { zis ->
                 var e: ZipEntry? = zis.nextEntry
                 while (e != null) {
                     when {
                         e.name == "project.json" -> projectJson = zis.readBytes().toString(Charsets.UTF_8)
+                        e.name == "images/meta.json" ->
+                            incomingMeta = JSONObject(zis.readBytes().toString(Charsets.UTF_8))
                         e.name.startsWith("images/") -> {
                             val name = e.name.removePrefix("images/")
                             val f = File(imagesDir(c), name)
@@ -319,7 +417,13 @@ object Store {
             if (projectJson == null) {
                 tmpImgs.forEach { it.first.delete() }; return null
             }
-            metaCache = null   // 重载元数据（meta.json 可能随包导入）
+            metaCache = null   // 重载元数据
+            // 随包的 meta.json 要**合并**而不是覆盖——否则会把本机其他照片的原始像素/PPI 记录清空
+            incomingMeta?.let { inc ->
+                val m = loadMeta(c)
+                inc.keys().forEach { k -> m[k] = inc.getJSONObject(k) }
+                saveMeta(c)
+            }
             // imgId 冲突处理：简单起见直接使用（UUID 冲突概率极低）
             Project.fromJson(JSONObject(projectJson!!)).also { save(c, it) }
         } catch (e: Exception) { null }

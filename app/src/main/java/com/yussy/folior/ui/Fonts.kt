@@ -6,9 +6,12 @@ import android.graphics.Typeface
 /**
  * 内置字体清单。
  *
- * 全部为 SIL OFL 授权，可随应用分发。中文三种常用风格（宋 / 黑 / 楷）＋一款现代标题体，
+ * 全部为 SIL OFL 授权，可随应用分发。中文三种常用风格（宋 / 黑 / 楷），
  * 西文按摄影书排版惯例给出古典衬线、展示衬线、现代无衬线、几何无衬线、打字机五类。
  * id 为空串表示系统默认字体，旧工程（无 font 字段）自然落到它。
+ *
+ * "Futura" 一行用的是 Jost（OFL）——Futura 本身是 Bauer Types 的商业字体，
+ * 不能随 MIT 项目分发；Jost 是同一套 1920 年代几何无衬线设计稿的开源复刻。
  */
 object Fonts {
 
@@ -31,18 +34,24 @@ object Fonts {
         Def("sc-sans", "思源黑体", "摄影书 Aa", "fonts/NotoSansSC.ttf", "中文",
             "fonts/NotoSansSC-Bold.ttf"),
         Def("sc-kai", "霞鹜文楷", "手记 Aa", "fonts/LXGWWenKai.ttf", "中文"),
-        Def("sc-title", "得意黑", "标题 Aa", "fonts/SmileySans.ttf", "中文"),
 
         Def("garamond", "Garamond", "Photographs", "fonts/EBGaramond.ttf", "西文"),
         Def("playfair", "Playfair Display", "Photographs", "fonts/PlayfairDisplay.ttf", "西文"),
         Def("inter", "Inter", "Photographs", "fonts/Inter.ttf", "西文"),
-        Def("jost", "Jost", "Photographs", "fonts/Jost.ttf", "西文"),
+        Def("jost", "Futura", "Photographs", "fonts/Jost.ttf", "西文",
+            "fonts/Jost-Bold.ttf"),
         Def("mono", "Space Mono", "Photographs", "fonts/SpaceMono.ttf", "西文"),
     )
 
+    /** 已下线的字体 id → 替代项。旧工程打开时静默落到同类字体，不突变版式。 */
+    private val LEGACY = mapOf("sc-title" to "sc-sans")
+
     private val cache = HashMap<String, Typeface?>()
 
-    fun def(id: String): Def = ALL.firstOrNull { it.id == id } ?: ALL[0]
+    fun def(id: String): Def {
+        val key = LEGACY[id] ?: id
+        return ALL.firstOrNull { it.id == key } ?: ALL[0]
+    }
 
     fun displayName(id: String): String = def(id).name
 
