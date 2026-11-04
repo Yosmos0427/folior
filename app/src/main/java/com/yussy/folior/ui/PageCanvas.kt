@@ -421,11 +421,17 @@ class PageCanvas @JvmOverloads constructor(
 
             // 墙外延伸预览（默认开启）：把超出页面的画面以半透明"幽灵"画在墙面之外，
             // 便于判断被裁掉的内容；墙面内仍按正常不透明度渲染。
-            // 双联时横向越界的照片是跨页，不算溢出。
-            val canCross = spreadMode && slots.size == 2 && p.type == Project.TYPE_BOOK
+            // 跨页照片不算溢出——它完整地存在于对开的另一页上。
+            // 跨页是否成立只取决于对开配对，与当前是单页还是双联无关：
+            // 单页视图把邻页溢入的那一半补上，双联视图让越界部分接到邻页上。
+            val bookPages = p.type == Project.TYPE_BOOK
+            fun canSpan(idx: Int): Boolean = bookPages && (
+                leftNeighborOf(idx) in p.pages.indices ||
+                    rightNeighborOf(idx, p.pages.size) in p.pages.indices)
+            val canCross = spreadMode && slots.size == 2 && bookPages
             val hasOverflow = slots.any { s ->
                 p.pages.getOrNull(s.index)?.items?.any {
-                    if (canCross && it.crossesHorizontally()) false
+                    if (canSpan(s.index) && it.crossesHorizontally()) false
                     else it.x < -0.001f || it.y < -0.001f ||
                         it.x + it.w > 1.001f || it.y + it.h > 1.001f
                 } == true
@@ -440,7 +446,8 @@ class PageCanvas @JvmOverloads constructor(
                 canvas.clipRect(ghostArea)
                 for (s in slots) {
                     val pg = p.pages.getOrNull(s.index) ?: continue
-                    PageRenderer.drawItems(context, p, pg, canvas, s.rect, skipCrossing = canCross)
+                    PageRenderer.drawItems(context, p, pg, canvas, s.rect,
+                        skipCrossing = canSpan(s.index))
                 }
                 canvas.restoreToCount(layer)
             }
@@ -458,12 +465,25 @@ class PageCanvas @JvmOverloads constructor(
             }
 
             // 内容：逐页裁到各自页面内——普通元素越界即被裁掉（越界部分另有浅色预览），
-            // 跨页照片已在上一层单独绘制
+            // 跨页照片已在上一层单独绘制。
+            // 单页视图（竖屏工作台）在这里补上「邻页溢入本页的那一半」，
+            // 于是这一页看起来和横屏双联里同一页完全一样。
             for (s in slots) {
                 val page = p.pages.getOrNull(s.index) ?: continue
                 canvas.save()
                 canvas.clipRect(s.rect)
-                PageRenderer.drawItems(context, p, page, canvas, s.rect, skipCrossing = canCross)
+                if (!canCross && canSpan(s.index)) {
+                    PageRenderer.drawSpillFrom(context, p,
+                        p.pages.getOrNull(leftNeighborOf(s.index)), page, canvas, s.rect,
+                        toRight = false)
+                    PageRenderer.drawSpillFrom(context, p,
+                        p.pages.getOrNull(rightNeighborOf(s.index, p.pages.size)), page, canvas, s.rect,
+                        toRight = true)
+                    PageRenderer.drawCrossingPhotos(context, p, page, canvas, s.rect)
+                    PageRenderer.drawItems(context, p, page, canvas, s.rect, skipCrossing = true)
+                } else {
+                    PageRenderer.drawItems(context, p, page, canvas, s.rect, skipCrossing = canCross)
+                }
                 canvas.restore()
             }
 

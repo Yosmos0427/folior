@@ -30,6 +30,33 @@ object PageRenderer {
         canvas.restoreToCount(save)
     }
 
+    /**
+     * 单页渲染，连同「邻页跨页照片溢入本页的那一半」。
+     * 竖屏工作台与放映单页用它，保证看到的这一页与横屏双联里同一页完全一致。
+     * 层次与双联相同：底色 → 跨页照片（左邻溢入、右邻溢入、本页越出）→ 普通元素。
+     */
+    fun drawPageWithSpill(
+        ctx: Context, project: Project, page: Page, index: Int,
+        canvas: android.graphics.Canvas, rect: RectF,
+        highQuality: Boolean = false, pxHint: Int? = null
+    ) {
+        drawPageBackground(project, page, canvas, rect)
+        val save = canvas.save()
+        canvas.clipRect(rect)
+        if (project.type == Project.TYPE_BOOK) {
+            val n = project.pages.size
+            drawSpillFrom(ctx, project, project.pages.getOrNull(leftNeighborOf(index)), page,
+                canvas, rect, toRight = false, highQuality = highQuality, pxHint = pxHint)
+            drawSpillFrom(ctx, project, project.pages.getOrNull(rightNeighborOf(index, n)), page,
+                canvas, rect, toRight = true, highQuality = highQuality, pxHint = pxHint)
+            drawCrossingPhotos(ctx, project, page, canvas, rect, highQuality, pxHint)
+            drawItems(ctx, project, page, canvas, rect, highQuality, pxHint, skipCrossing = true)
+        } else {
+            drawItems(ctx, project, page, canvas, rect, highQuality, pxHint)
+        }
+        canvas.restoreToCount(save)
+    }
+
     fun drawPageBackground(
         project: Project, page: Page,
         canvas: android.graphics.Canvas, rect: RectF
@@ -89,11 +116,12 @@ object PageRenderer {
      *
      * @param neighbor 相邻页（没有朝本页方向越界的照片时传 null）
      * @param toRight  true = 邻页在本页右侧（它的左越界部分延伸进来）
+     * @param pxHint   本页在目标输出中的像素宽度（放大/高清时传入，让溢入的那半也够清晰）
      */
     fun drawSpillFrom(
         ctx: Context, project: Project, neighbor: Page?, page: Page,
         canvas: android.graphics.Canvas, rect: RectF,
-        toRight: Boolean
+        toRight: Boolean, highQuality: Boolean = false, pxHint: Int? = null
     ) {
         if (neighbor == null) return
         // 只有真的朝本页方向越界时才补绘
@@ -105,9 +133,12 @@ object PageRenderer {
         val top = rect.top + (rect.height() - nh) / 2f
         val nRect = if (toRight) RectF(rect.right, top, rect.right + nw, top + nh)
         else RectF(rect.left - nw, top, rect.left, top + nh)
+        val hint = pxHint?.let {
+            (it * neighbor.widthMm(project) / page.widthMm(project).coerceAtLeast(1f)).toInt()
+        } ?: nw.toInt()
         val save = canvas.save()
         canvas.clipRect(rect)
-        drawCrossingPhotos(ctx, project, neighbor, canvas, nRect, false, nw.toInt())
+        drawCrossingPhotos(ctx, project, neighbor, canvas, nRect, highQuality, hint)
         canvas.restoreToCount(save)
     }
 

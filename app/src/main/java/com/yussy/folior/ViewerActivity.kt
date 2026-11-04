@@ -469,8 +469,10 @@ class ViewerActivity : AppCompatActivity() {
         drawShadow(c, rect)
         // 放大时按屏幕上页面的实际像素宽度提升解码尺寸，100% 才真的是原始像素
         val hint = (rect.width() * zoom).toInt().coerceAtLeast(1)
-        PageRenderer.drawPage(this, project, page, c, rect.left, rect.top,
-            rect.width(), rect.height(), highQuality = hq, pxHint = hint)
+        // 单页放映也带上跨页照片：邻页溢入本页的那一半照常补上，
+        // 与横屏摊开时这一页所见一致
+        PageRenderer.drawPageWithSpill(this, project, page, pageIndex, c, rect,
+            highQuality = hq, pxHint = hint)
     }
 
     private fun drawSpread(c: Canvas, hq: Boolean) {
