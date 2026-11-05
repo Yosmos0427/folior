@@ -135,19 +135,24 @@ class EditorActivity : AppCompatActivity() {
         textSize = 13f
         setTextColor(0xFF1A1A18.toInt())
         gravity = Gravity.CENTER
-        setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
+        val padH = dp(14f)
+        setPadding(padH, dp(9f), padH, dp(9f))
         // 单行：宽度不定时系统会按可用宽度折行，两个字也能断成上下两截
         maxLines = 1
         isSingleLine = true
-        setHorizontallyScrolling(true)
         background = GradientDrawable().apply {
-            cornerRadius = dp(16f).toFloat()
+            cornerRadius = dp(18f).toFloat()
             setColor(0xFFFFFFFF.toInt())
             setStroke(dp(0.8f), 0x1F000000)
         }
         elevation = dp(3f).toFloat()
+        // 定宽：按实测四个汉字的宽度给所有按钮统一宽度。
+        // 之前用 WRAP_CONTENT，测量时被可用宽度收紧，两个字只露一个，所以改成定宽。
+        val fourChar = Math.max(paint.measureText("测测测测"), textSize * 4f * 1.06f)
+        val btnW = Math.ceil(fourChar.toDouble()).toInt() + padH * 2
+        minimumWidth = btnW
         layoutParams = LinearLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            btnW, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(8f)
             gravity = Gravity.END
         }
