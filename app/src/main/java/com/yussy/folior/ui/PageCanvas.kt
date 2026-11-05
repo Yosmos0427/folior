@@ -1216,6 +1216,7 @@ class PageCanvas @JvmOverloads constructor(
                 onTouchDown?.invoke()
                 if (selected != null && selList.size == 1 && hitResizeHandle(ev.x, ev.y)) {
                     resizing = true
+                    resetSnapState()
                     val sel = selected!!
                     resizeBaseW = sel.w
                     resizeBaseH = sel.h
@@ -1271,6 +1272,29 @@ class PageCanvas @JvmOverloads constructor(
                     }
                     it.w = (multiInitialW * sc).coerceIn(0.02f, 4f)
                     it.h = (multiInitialH * sc).coerceIn(0.02f, 4f)
+                    // 双指缩放同样跟参考位置对齐：中心不变，边去吸目标
+                    val slot0 = slotOf(it)
+                    val page0 = slot0?.let { s -> project?.pages?.getOrNull(s.index) }
+                    if (slot0 != null && page0 != null) {
+                        val r0 = ((it.rotation % 360f) + 360f) % 360f
+                        if (r0 < 1f || abs(r0 - 180f) < 1f || r0 > 359f) {
+                            val (wc, hx) = snapResizeAxis(cx0, it.w, tolX(slot0), true, slot0, page0, cy0)
+                            val (hc, hy) = snapResizeAxis(cy0, it.h, tolY(slot0), false, slot0, page0, cx0)
+                            val dxPx = if (hx != null) abs(wc - it.w) * slot0.rect.width() * viewScale
+                            else Float.MAX_VALUE
+                            val dyPx = if (hy != null) abs(hc - it.h) * slot0.rect.height() * viewScale
+                            else Float.MAX_VALUE
+                            if (dxPx <= dyPx && hx != null) {
+                                it.w = wc.coerceIn(0.02f, 4f)
+                                if (multiInitialW > 0f) it.h = it.w * (multiInitialH / multiInitialW)
+                                snapV = hx; snapH = null
+                            } else if (hy != null) {
+                                it.h = hc.coerceIn(0.02f, 4f)
+                                if (multiInitialH > 0f) it.w = it.h * (multiInitialW / multiInitialH)
+                                snapV = null; snapH = hy
+                            }
+                        }
+                    }
                     it.x = cx0 - it.w / 2f
                     it.y = cy0 - it.h / 2f
                     // 墙上的照片按实际尺寸等比缩放
@@ -1295,6 +1319,7 @@ class PageCanvas @JvmOverloads constructor(
                 if (resizing) {
                     if (isUp) { resizing = false; onModified?.invoke() }
                     else resizing = false
+                    resetSnapState()
                     invalidate()
                     return true
                 }
@@ -1499,6 +1524,77 @@ class PageCanvas @JvmOverloads constructor(
         return hit.delta
     }
 
+    /**
+     * 缩放时的单轴吸附。缩放以中心为锚点、两边对称外扩，所以「哪一边先碰到目标」
+     * 就按那一边反算尺寸：左边命中 → 宽 = 2×(中心−目标)，右边命中 → 宽 = 2×(目标−中心)。
+     * 两边的候选都试，取位移更小的那个。
+     *
+     * @return 修正后的尺寸与命中的目标（后者用来画参考线）
+     */
+    private fun snapResizeAxis(
+        center: Float, size: Float, tol: Float, vertical: Boolean,
+        slot: Slot, page: Page, crossCenter: Float
+    ): Pair<Float, AxisSnapper.Hit?> {
+        val p = project ?: return size to null
+        if (tol <= 0f) return size to null
+        val acc = AxisSnapper()
+        acc.add(0f, SnapKind.PAGE); acc.add(0.5f, SnapKind.PAGE); acc.add(1f, SnapKind.PAGE)
+        for (o in page.items) {
+            if (o.type == Item.TYPE_STROKE) continue
+            if (selList.any { it === o }) continue
+            if (vertical) {
+                acc.add(o.x, SnapKind.ELEMENT)
+                acc.add(o.x + o.w / 2f, SnapKind.ELEMENT)
+                acc.add(o.x + o.w, SnapKind.ELEMENT)
+            } else {
+                acc.add(o.y, SnapKind.ELEMENT)
+                acc.add(o.y + o.h / 2f, SnapKind.ELEMENT)
+                acc.add(o.y + o.h, SnapKind.ELEMENT)
+            }
+        }
+        addGuideTargets(acc, vertical, slot, p,
+            if (vertical) center else crossCenter,
+            if (vertical) crossCenter else center)
+        if (p.type == Project.TYPE_EXHIBITION) {
+            val mm = if (vertical) page.widthMm(p) else page.heightMm(p)
+            val step = 10f / mm.coerceAtLeast(1f)
+            // 网格目标取「两条边附近的整厘米线」——取中心没有意义，中心不动
+            acc.add(round((center - size / 2f) / step) * step, SnapKind.GRID)
+            acc.add(round((center + size / 2f) / step) * step, SnapKind.GRID)
+        }
+
+        var bestSize = size
+        var bestHit: AxisSnapper.Hit? = null
+        var bestScore = Float.MAX_VALUE
+        val minSize = 0.02f
+        for (t in acc.all) {
+            val penalty = snapPenalty(t.kind) * tol
+            if (t.value < center - 1e-4f) {
+                val s = (center - t.value) * 2f
+                if (s >= minSize) {
+                    val d = abs(s - size)
+                    if (d <= tol && d + penalty < bestScore) {
+                        bestScore = d + penalty
+                        bestSize = s
+                        bestHit = AxisSnapper.Hit(t.value, t.kind, s - size, 0)
+                    }
+                }
+            }
+            if (t.value > center + 1e-4f) {
+                val s = (t.value - center) * 2f
+                if (s >= minSize) {
+                    val d = abs(s - size)
+                    if (d <= tol && d + penalty < bestScore) {
+                        bestScore = d + penalty
+                        bestSize = s
+                        bestHit = AxisSnapper.Hit(t.value, t.kind, s - size, 2)
+                    }
+                }
+            }
+        }
+        return bestSize to bestHit
+    }
+
     /** 同一目标上手指继续远离超过 1.6 倍容差 → 放开并冷却 260ms，避免"粘住拖不走"。 */
     private fun shouldRelease(
         hit: AxisSnapper.Hit, raw: Float, tol: Float, vertical: Boolean, now: Long
@@ -1656,6 +1752,13 @@ class PageCanvas @JvmOverloads constructor(
         val lx = abs(dx * cos(rad) - dy * sin(rad)).toFloat()
         val ly = abs(dx * sin(rad) + dy * cos(rad)).toFloat()
         val oldW = it.w
+        val page = project?.pages?.getOrNull(slot.index) ?: return
+        // 旋转后元素的「左右边」不再对应竖直参考线，吸附会显得乱跳；只在正立时吸
+        val rot = ((it.rotation % 360f) + 360f) % 360f
+        val axisAligned = rot < 1f || abs(rot - 180f) < 1f || rot > 359f
+        snapV = null; snapH = null
+        var w: Float
+        var h: Float
 
         if (resizeLockAspect && resizeBaseW > 0f && resizeBaseH > 0f) {
             // 照片：以起始尺寸等比缩放，比例严格保持
@@ -1666,12 +1769,40 @@ class PageCanvas @JvmOverloads constructor(
             val maxScale = 8f / Math.max(resizeBaseW, resizeBaseH)
             val sc = wantScale.coerceAtLeast(minScale).coerceAtMost(
                 if (maxScale > minScale) maxScale else minScale)
-            it.w = resizeBaseW * sc
-            it.h = resizeBaseH * sc
+            w = resizeBaseW * sc
+            h = resizeBaseH * sc
+
+            // 等比缩放时两轴共用一个系数：两个轴各自算一个候选系数，取离手指更近的那个
+            if (axisAligned) {
+                val (wc, hx) = snapResizeAxis(cxN, w, tolX(slot), true, slot, page, cyN)
+                val (hc, hy) = snapResizeAxis(cyN, h, tolY(slot), false, slot, page, cxN)
+                val dxPx = if (hx != null) abs(wc - w) * slot.rect.width() * viewScale
+                else Float.MAX_VALUE
+                val dyPx = if (hy != null) abs(hc - h) * slot.rect.height() * viewScale
+                else Float.MAX_VALUE
+                if (dxPx <= dyPx && hx != null) {
+                    w = wc.coerceIn(0.02f, 8f)
+                    h = (resizeBaseH * (w / resizeBaseW)).coerceIn(0.02f, 8f)
+                    snapV = hx
+                } else if (hy != null) {
+                    h = hc.coerceIn(0.02f, 8f)
+                    w = (resizeBaseW * (h / resizeBaseH)).coerceIn(0.02f, 8f)
+                    snapH = hy
+                }
+            }
         } else {
-            it.w = (lx * 2f / slot.rect.width()).coerceIn(0.02f, 8f)
-            it.h = (ly * 2f / slot.rect.height()).coerceIn(0.02f, 8f)
+            w = (lx * 2f / slot.rect.width()).coerceIn(0.02f, 8f)
+            h = (ly * 2f / slot.rect.height()).coerceIn(0.02f, 8f)
+            if (axisAligned) {
+                val (wc, hx) = snapResizeAxis(cxN, w, tolX(slot), true, slot, page, cyN)
+                val (hc, hy) = snapResizeAxis(cyN, h, tolY(slot), false, slot, page, cxN)
+                w = wc.coerceIn(0.02f, 8f)
+                h = hc.coerceIn(0.02f, 8f)
+                snapV = hx; snapH = hy
+            }
         }
+        it.w = w
+        it.h = h
         // 墙上照片：实际打印宽度跟随宽度轴
         if (it.printMm != null && oldW > 0f)
             it.printMm = it.printMm!! * (it.w / oldW)

@@ -9,6 +9,18 @@ import kotlin.math.abs
 enum class SnapKind { GUIDE, ELEMENT, PAGE, EQUAL, GRID }
 
 /**
+ * 同级距离时的优先级罚分（乘容差）。数值小 = 更优先。
+ * 缩放吸附要按同一套优先级挑目标，所以放在外面共用。
+ */
+fun snapPenalty(k: SnapKind): Float = when (k) {
+    SnapKind.GUIDE -> 0f
+    SnapKind.ELEMENT -> 0.02f
+    SnapKind.PAGE -> 0.05f
+    SnapKind.EQUAL -> 0.12f
+    SnapKind.GRID -> 0.2f
+}
+
+/**
  * 单轴吸附器。
  *
  * 做法与桌面排版软件一致：把候选目标摊成一维轴值，与拖动元素的
@@ -31,6 +43,9 @@ class AxisSnapper {
     }
 
     val size: Int get() = list.size
+
+    /** 所有目标（缩放吸附要按「目标 → 尺寸」反算，不能只要最近的那个）。 */
+    val all: List<Target> get() = list
 
     /**
      * @param start 元素（或多选整体框）在该轴上的起点，归一化值
@@ -64,13 +79,7 @@ class AxisSnapper {
         return best
     }
 
-    private fun penaltyOf(k: SnapKind): Float = when (k) {
-        SnapKind.GUIDE -> 0f
-        SnapKind.ELEMENT -> 0.02f
-        SnapKind.PAGE -> 0.05f
-        SnapKind.EQUAL -> 0.12f
-        SnapKind.GRID -> 0.2f
-    }
+    private fun penaltyOf(k: SnapKind): Float = snapPenalty(k)
 }
 
 /**
