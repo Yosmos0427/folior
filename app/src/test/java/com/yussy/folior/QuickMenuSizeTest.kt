@@ -118,8 +118,21 @@ class QuickMenuSizeTest {
     fun drawWithoutClip() {
         launch()
         showAllButtons()
-        act.window.decorView.draw(
-            Canvas(Bitmap.createBitmap(1080, 2400, Bitmap.Config.ARGB_8888))
+        (field("quickToggle") as TextView).performClick()   // 展开菜单
+        val decor = act.window.decorView
+        decor.measure(
+            View.MeasureSpec.makeMeasureSpec(1080, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(2400, View.MeasureSpec.EXACTLY)
         )
+        decor.layout(0, 0, 1080, 2400)
+        val bmp = Bitmap.createBitmap(1080, 2400, Bitmap.Config.ARGB_8888)
+        decor.draw(Canvas(bmp))
+        java.io.FileOutputStream("/tmp/quickmenu.png").use {
+            bmp.compress(Bitmap.CompressFormat.PNG, 100, it)
+        }
+        // 容器与按钮都不许出屏：右边缘必须落在屏幕内
+        val menu = field("quickActions") as LinearLayout
+        println("BOX w=${menu.width} h=${menu.height} x=${menu.x} right=${menu.x + menu.width}")
+        assertTrue("菜单超出屏幕右边缘", menu.x + menu.width <= 1080)
     }
 }

@@ -29,7 +29,7 @@ android {
         applicationId = "com.yussy.folior"
         minSdk = 31
         targetSdk = 34
-        versionCode = 86
+        versionCode = 87
         versionName = "0.37.1"
     }
 

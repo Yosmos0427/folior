@@ -131,6 +131,17 @@ class EditorActivity : AppCompatActivity() {
 
     // ---------------- 浮动菜单 ----------------
 
+    /**
+     * 浮动菜单按钮的统一宽度：实测四个汉字的宽度 + 左右内边距。
+     * 菜单容器也按这个宽度定死，按钮显隐不会改变容器尺寸，也就不会挤出屏幕。
+     */
+    private val quickBtnW: Int by lazy {
+        val probe = TextView(this).apply { textSize = 13f }
+        val four = Math.max(probe.paint.measureText("测测测测"), probe.textSize * 4f * 1.06f)
+        val w = Math.ceil(four.toDouble()).toInt() + dp(14f) * 2
+        w.coerceAtMost(resources.displayMetrics.widthPixels - dp(48f))
+    }
+
     private fun quickAction(): TextView = TextView(this).apply {
         textSize = 13f
         setTextColor(0xFF1A1A18.toInt())
@@ -146,15 +157,10 @@ class EditorActivity : AppCompatActivity() {
             setStroke(dp(0.8f), 0x1F000000)
         }
         elevation = dp(3f).toFloat()
-        // 定宽：按实测四个汉字的宽度给所有按钮统一宽度。
-        // 之前用 WRAP_CONTENT，测量时被可用宽度收紧，两个字只露一个，所以改成定宽。
-        val fourChar = Math.max(paint.measureText("测测测测"), textSize * 4f * 1.06f)
-        val btnW = Math.ceil(fourChar.toDouble()).toInt() + padH * 2
-        minimumWidth = btnW
+        minimumWidth = quickBtnW
         layoutParams = LinearLayout.LayoutParams(
-            btnW, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             topMargin = dp(8f)
-            gravity = Gravity.END
         }
     }
 
@@ -524,6 +530,8 @@ class EditorActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.END
             visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                quickBtnW, ViewGroup.LayoutParams.WRAP_CONTENT)
             addView(quickA)
             addView(quickB)
             addView(quickC)
@@ -538,7 +546,7 @@ class EditorActivity : AppCompatActivity() {
             addView(quickActions)
         }
         canvasWrap.addView(quickBox, android.widget.FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            quickBtnW, ViewGroup.LayoutParams.WRAP_CONTENT,
             Gravity.TOP or Gravity.END).apply {
             topMargin = dp(10f); rightMargin = dp(10f)
         })
