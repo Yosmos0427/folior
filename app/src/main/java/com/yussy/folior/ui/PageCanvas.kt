@@ -339,6 +339,42 @@ class PageCanvas @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * 重新计算页位但保留视图缩放/平移。
+     * 撤销/重做只改内容，用户放大看的那个局部不该被弹回 1 倍。
+     */
+    fun relayoutKeepView() {
+        layoutSlots()
+        clampView()
+        invalidate()
+    }
+
+    /**
+     * 整份工程被替换（撤销 / 重做）后调用：清掉所有指向旧对象引用的临时状态。
+     *
+     * 撤销是把工程从 JSON 重建一遍，元素、指示线、笔画都换成了新实例。
+     * 这些字段如果继续持有旧引用，会出现「指示线怎么点都选不中」
+     * （hitGuide 只认 activeGuide 那条），以及绘制撤销把笔画从旧页里删掉的问题。
+     */
+    fun onProjectReplaced() {
+        selList.clear()
+        selected = null
+        activeGuide = null
+        guideDragMode = 0
+        undoStack.clear()
+        dropTargetIdx = -1
+        dragging = false
+        resizing = false
+        reordering = false
+        multiActive = false
+        drawing = false
+        liveStroke = null
+        liveRaw.clear()
+        resetSnapState()
+        onSelectionChanged?.invoke(null)
+        invalidate()
+    }
+
     private fun layoutSlots() {
         val p = project ?: return
         if (width == 0 || height == 0) return
@@ -1258,7 +1294,21 @@ class PageCanvas @JvmOverloads constructor(
                 }
                 if (multiActive && ev.pointerCount >= 2 && selected != null) {
                     val it = selected!!
-                    val scale = dist(ev) / multiInitialDist
+                    val d = dist(ev)
+                    // 两指落下时几乎重合 → dist ≈ 0，拿它做分母会算出 Infinity/NaN。
+                    // NaN 进了模型，JSONObject 会直接拒收（Forbidden numeric value），
+                    // 于是存盘、快照、撤销全部跟着崩。等手指张开到能测量的距离再起算，
+                    // 以此刻的尺寸为基准，缩放不会跳。
+                    if (d < minPinchPx()) return true
+                    if (multiInitialDist < minPinchPx()) {
+                        multiInitialDist = d
+                        multiInitialAngle = angle(ev)
+                        multiInitialW = it.w; multiInitialH = it.h
+                        multiInitialX = it.x; multiInitialY = it.y
+                        multiInitialPrintMm = it.printMm ?: 0f
+                        multiInitialRot = it.rotation
+                    }
+                    val scale = finite(d / multiInitialDist, 1f)
                     val deltaAngle = Math.toDegrees((angle(ev) - multiInitialAngle).toDouble()).toFloat()
                     // 以图像中心为锚点缩放：保持中心不动
                     val cx0 = multiInitialX + multiInitialW / 2f
@@ -1270,8 +1320,8 @@ class PageCanvas @JvmOverloads constructor(
                         val hi = Math.min(4f / multiInitialW, 4f / multiInitialH)
                         sc = scale.coerceIn(Math.min(lo, hi), Math.max(lo, hi))
                     }
-                    it.w = (multiInitialW * sc).coerceIn(0.02f, 4f)
-                    it.h = (multiInitialH * sc).coerceIn(0.02f, 4f)
+                    it.w = finite((multiInitialW * sc).coerceIn(0.02f, 4f), 0.02f)
+                    it.h = finite((multiInitialH * sc).coerceIn(0.02f, 4f), 0.02f)
                     // 双指缩放同样跟参考位置对齐：中心不变，边去吸目标
                     val slot0 = slotOf(it)
                     val page0 = slot0?.let { s -> project?.pages?.getOrNull(s.index) }
@@ -1285,22 +1335,22 @@ class PageCanvas @JvmOverloads constructor(
                             val dyPx = if (hy != null) abs(hc - it.h) * slot0.rect.height() * viewScale
                             else Float.MAX_VALUE
                             if (dxPx <= dyPx && hx != null) {
-                                it.w = wc.coerceIn(0.02f, 4f)
-                                if (multiInitialW > 0f) it.h = it.w * (multiInitialH / multiInitialW)
+                                it.w = finite(wc.coerceIn(0.02f, 4f), it.w)
+                                if (multiInitialW > 0f) it.h = finite(it.w * (multiInitialH / multiInitialW), it.h)
                                 snapV = hx; snapH = null
                             } else if (hy != null) {
-                                it.h = hc.coerceIn(0.02f, 4f)
-                                if (multiInitialH > 0f) it.w = it.h * (multiInitialW / multiInitialH)
+                                it.h = finite(hc.coerceIn(0.02f, 4f), it.h)
+                                if (multiInitialH > 0f) it.w = finite(it.h * (multiInitialW / multiInitialH), it.w)
                                 snapV = null; snapH = hy
                             }
                         }
                     }
-                    it.x = cx0 - it.w / 2f
-                    it.y = cy0 - it.h / 2f
+                    it.x = finite(cx0 - it.w / 2f, it.x)
+                    it.y = finite(cy0 - it.h / 2f, it.y)
                     // 墙上的照片按实际尺寸等比缩放
                     if (it.printMm != null && multiInitialPrintMm > 0f)
-                        it.printMm = multiInitialPrintMm * scale
-                    it.rotation = snapAngleWithGuides(multiInitialRot + deltaAngle)
+                        it.printMm = finite(multiInitialPrintMm * scale, multiInitialPrintMm)
+                    it.rotation = finite(snapAngleWithGuides(multiInitialRot + deltaAngle), it.rotation)
                     invalidate()
                 } else if (dragging && selList.isNotEmpty()) {
                     val slot = slotOf(selList[0]) ?: return true
@@ -1383,6 +1433,12 @@ class PageCanvas @JvmOverloads constructor(
 
     private fun dist(ev: MotionEvent): Float =
         hypot(ev.getX(0) - ev.getX(1), ev.getY(0) - ev.getY(1))
+
+    /** 双指缩放的最小可测量间距：小于它视为两指重合，先不起算（见 MOVE 分支） */
+    private fun minPinchPx(): Float = 16f * resources.displayMetrics.density
+
+    /** 数值兜底：任何 NaN / Infinity 都换成 fallback，绝不让它进模型 */
+    private fun finite(v: Float, fallback: Float): Float = if (v.isFinite()) v else fallback
 
     private fun angle(ev: MotionEvent): Float =
         atan2((ev.getY(1) - ev.getY(0)).toDouble(), (ev.getX(1) - ev.getX(0)).toDouble()).toFloat()
@@ -1801,14 +1857,14 @@ class PageCanvas @JvmOverloads constructor(
                 snapV = hx; snapH = hy
             }
         }
-        it.w = w
-        it.h = h
+        it.w = finite(w, it.w)
+        it.h = finite(h, it.h)
         // 墙上照片：实际打印宽度跟随宽度轴
         if (it.printMm != null && oldW > 0f)
-            it.printMm = it.printMm!! * (it.w / oldW)
+            it.printMm = finite(it.printMm!! * (it.w / oldW), it.printMm!!)
         // 中心保持
-        it.x = cxN - it.w / 2f
-        it.y = cyN - it.h / 2f
+        it.x = finite(cxN - it.w / 2f, it.x)
+        it.y = finite(cyN - it.h / 2f, it.y)
         invalidate()
     }
 

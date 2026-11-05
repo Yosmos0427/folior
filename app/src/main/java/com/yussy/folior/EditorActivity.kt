@@ -317,11 +317,22 @@ class EditorActivity : AppCompatActivity() {
 
     // ---------------- 撤销 / 重做 ----------------
 
-    private fun snapshot() = History.Snapshot(project.toJson().toString(), pageIndex)
+    /**
+     * 当前状态快照。
+     *
+     * 序列化本身不该失败（数值已在 Model 里过兜底），但快照是每一步操作的前置：
+     * 一旦这里抛异常，就是整条撤销/存盘链路连着崩。所以再兜一层，失败返回 null，
+     * 调用方按「这一步不记历史」处理，界面照常可用。
+     */
+    private fun snapshot(): History.Snapshot? = try {
+        History.Snapshot(project.toJson().toString(), pageIndex)
+    } catch (t: Throwable) {
+        null
+    }
 
     /** 记录一次操作前的状态（在操作执行前调用） */
     private fun pushHistory() {
-        history.push(snapshot())
+        snapshot()?.let { history.push(it) }
         updateHistoryButtons()
     }
 
@@ -341,29 +352,43 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun undo() {
-        val s = history.undo(snapshot()) ?: return
+        val cur = snapshot() ?: return
+        val s = history.undo(cur) ?: return
         restore(s)
     }
 
     private fun redo() {
-        val s = history.redo(snapshot()) ?: return
+        val cur = snapshot() ?: return
+        val s = history.redo(cur) ?: return
         restore(s)
     }
 
     /** 用快照整份替换当前工程并刷新所有视图 */
     private fun restore(s: History.Snapshot) {
-        val p = Project.fromJson(org.json.JSONObject(s.json))
+        val p = try {
+            Project.fromJson(org.json.JSONObject(s.json))
+        } catch (t: Throwable) {
+            // 快照坏了就当这一步撤销不了：清空历史，绝不让编辑器跟着崩
+            history.clear()
+            updateHistoryButtons()
+            Toast.makeText(this, "这一步撤销不了", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (p.pages.isEmpty()) p.pages.add(Page())
         project = p
         pageIndex = s.pageIndex.coerceIn(0, p.pages.size - 1)
-        canvas.select(null)
+        // 元素/指示线/笔画都换成了新对象：先清掉画布上指向旧对象的临时状态，
+        // 否则撤销之后指示线选不中、笔画撤销会改到已经不显示的那一页。
+        canvas.onProjectReplaced()
         canvas.project = p
         strip.project = p
         lightTable.project = p
         lightTable.stopPreload()
         if (framingOpen) closeFraming()
-        applyOrientation()
-        refreshAll(scrollStrip = false)
+        // 不重跑 applyOrientation：撤销只改内容，横竖屏与工具排布不会因此变化；
+        // 重排一次反而会把用户放大查看的视图位置弹回 1 倍。
+        syncSpread()
+        refreshAll(scrollStrip = false, keepView = true)
         scheduleSave()
         updateHistoryButtons()
     }
@@ -1373,12 +1398,12 @@ class EditorActivity : AppCompatActivity() {
     private fun pageOfItem(item: Item): Page? =
         project.pages.firstOrNull { pg -> pg.items.any { it === item } }
 
-    private fun refreshAll(scrollStrip: Boolean = true) {
+    private fun refreshAll(scrollStrip: Boolean = true, keepView: Boolean = false) {
         strip.setCurrent(pageIndex)
         strip.refresh()
         if (scrollStrip) strip.scrollToCurrent()
         syncSpread()
-        canvas.invalidateLayout()
+        if (keepView) canvas.relayoutKeepView() else canvas.invalidateLayout()
         updateBars()
     }
 

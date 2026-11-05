@@ -50,7 +50,7 @@ data class Project(
     fun toJson(): JSONObject {
         val o = JSONObject()
         o.put("id", id); o.put("title", title); o.put("type", type)
-        o.put("pageWmm", pageWmm.toDouble()); o.put("pageHmm", pageHmm.toDouble())
+        o.put("pageWmm", num(pageWmm, 210f)); o.put("pageHmm", num(pageHmm, 297f))
         o.put("defaultBg", defaultBg)
         o.put("format", "folior-1")
         val arr = JSONArray()
@@ -59,9 +59,9 @@ data class Project(
         val gs = JSONArray()
         guides.forEach { g ->
             gs.put(JSONObject().apply {
-                put("a", g.angle.toDouble())
-                put("x", g.axMm.toDouble())
-                put("y", g.ayMm.toDouble())
+                put("a", num(g.angle))
+                put("x", num(g.axMm))
+                put("y", num(g.ayMm))
             })
         }
         o.put("guides", gs)
@@ -94,7 +94,8 @@ data class Page(
     fun toJson(): JSONObject {
         val o = JSONObject()
         o.put("id", id); o.put("bg", bg ?: JSONObject.NULL)
-        o.put("wmm", wmm ?: JSONObject.NULL); o.put("hmm", hmm ?: JSONObject.NULL)
+        o.put("wmm", wmm?.let { num(it) } ?: JSONObject.NULL)
+        o.put("hmm", hmm?.let { num(it) } ?: JSONObject.NULL)
         val arr = JSONArray()
         items.forEach { arr.put(it.toJson()) }
         o.put("items", arr)
@@ -128,6 +129,19 @@ fun Page.renderSignature(project: Project): Int {
     h = 31 * h + project.defaultBg.hashCode()
     return h
 }
+
+/**
+ * 写进 JSON 的数值一律过这一关。
+ *
+ * org.json 对 NaN / Infinity 会直接抛 `Forbidden numeric value`——一旦某个坐标
+ * 被算成 NaN（双指缩放两指重合时除零就是这样），序列化立刻失败：快照、存盘、
+ * 撤销全部连带崩掉，编辑器表现为「一点就闪退」。这里把非有限值换成兜底值，
+ * 让最坏情况退化成位置/尺寸归零，而不是整份工程写不出去。
+ */
+private fun num(v: Float, fallback: Float = 0f): Double =
+    if (v.isFinite()) v.toDouble() else fallback.toDouble()
+
+private fun num(v: Double): Double = if (v.isFinite()) v else 0.0
 
 /**
  * 照片是否横向越出页面边界。跨页只按几何判定——越界且那一侧有相邻页就延伸过去，
@@ -271,35 +285,36 @@ data class Item(
     fun toJson(): JSONObject {
         val o = JSONObject()
         o.put("id", id); o.put("type", type)
-        o.put("x", x.toDouble()); o.put("y", y.toDouble())
-        o.put("w", w.toDouble()); o.put("h", h.toDouble())
-        o.put("rotation", rotation.toDouble())
+        o.put("x", num(x)); o.put("y", num(y))
+        o.put("w", num(w, 0.5f)); o.put("h", num(h, 0.5f))
+        o.put("rotation", num(rotation))
         o.put("imgId", imgId ?: JSONObject.NULL)
-        o.put("cropZoom", cropZoom.toDouble())
-        o.put("cropCx", cropCx.toDouble()); o.put("cropCy", cropCy.toDouble())
+        o.put("cropZoom", num(cropZoom, 1f))
+        o.put("cropCx", num(cropCx, 0.5f)); o.put("cropCy", num(cropCy, 0.5f))
         o.put("frameStroke", frameStroke)
         o.put("frameStyle", frameStyle ?: JSONObject.NULL)
         o.put("frameColor", frameColor ?: JSONObject.NULL)
-        o.put("frameW", frameW.toDouble())
+        o.put("frameW", num(frameW, 0.02f))
         o.put("matStyle", matStyle ?: JSONObject.NULL)
         o.put("matColor", matColor ?: JSONObject.NULL)
-        o.put("matPadX", matPadX.toDouble())
-        o.put("matPadY", matPadY.toDouble())
-        o.put("matPad", Math.min(matPadX, matPadY).toDouble())   // 旧版本兼容字段
-        o.put("matRatio", matRatio.toDouble())
-        o.put("printMm", printMm ?: JSONObject.NULL)
+        o.put("matPadX", num(matPadX, 0.08f))
+        o.put("matPadY", num(matPadY, 0.08f))
+        // 旧版本兼容字段
+        o.put("matPad", num(Math.min(matPadX, matPadY), 0.08f))
+        o.put("matRatio", num(matRatio))
+        o.put("printMm", printMm?.let { num(it, 1f) } ?: JSONObject.NULL)
         o.put("span", span)
         o.put("text", text)
-        o.put("fontScale", fontScale.toDouble())
+        o.put("fontScale", num(fontScale, 0.04f))
         o.put("color", color); o.put("bold", bold); o.put("italic", italic)
-        o.put("align", align); o.put("lineHeight", lineHeight.toDouble())
+        o.put("align", align); o.put("lineHeight", num(lineHeight, 1.4f))
         o.put("vertical", vertical)
         o.put("font", font)
         o.put("shapeKind", shapeKind); o.put("shapeColor", shapeColor)
-        o.put("strokeColor", strokeColor); o.put("strokeW", strokeW.toDouble())
-        o.put("strokeAlpha", strokeAlpha.toDouble()); o.put("strokeMarker", strokeMarker)
+        o.put("strokeColor", strokeColor); o.put("strokeW", num(strokeW, 0.012f))
+        o.put("strokeAlpha", num(strokeAlpha, 1f)); o.put("strokeMarker", strokeMarker)
         val ptsArr = JSONArray()
-        pts.forEach { ptsArr.put(it.toDouble()) }
+        pts.forEach { ptsArr.put(num(it)) }
         o.put("pts", ptsArr)
         return o
     }
