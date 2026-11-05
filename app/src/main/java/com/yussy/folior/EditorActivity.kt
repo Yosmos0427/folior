@@ -46,6 +46,7 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var quickA: TextView
     private lateinit var quickB: TextView
     private lateinit var quickC: TextView
+    private lateinit var quickD: TextView
     private var quickOpen = false
     private lateinit var sideStripWrap: LinearLayout
     private lateinit var bottomStripWrap: LinearLayout
@@ -177,10 +178,23 @@ class EditorActivity : AppCompatActivity() {
                 scheduleSave()
                 setQuickOpen(false)
             }
-            quickC.text = "删除"
+            // 镜像：一条线一键变成四象限对称的一组；已在组里则改为解除
+            val mirrored = canvas.activeGuideMirrored
+            quickC.text = if (mirrored) "解除" else "镜像"
             quickC.visibility = View.VISIBLE
             quickC.alpha = if (canvas.guideCount > 0) 1f else 0.4f
             quickC.setOnClickListener {
+                if (canvas.guideCount == 0) return@setOnClickListener
+                beginDiscreteChange()
+                if (canvas.activeGuideMirrored) canvas.unlinkActiveMirror() else canvas.addGuideMirrors()
+                scheduleSave()
+                updateQuickMenu()
+                setQuickOpen(false)
+            }
+            quickD.text = "删除"
+            quickD.visibility = View.VISIBLE
+            quickD.alpha = if (canvas.guideCount > 0) 1f else 0.4f
+            quickD.setOnClickListener {
                 if (canvas.guideCount == 0) return@setOnClickListener
                 beginDiscreteChange()
                 canvas.removeActiveGuide()
@@ -207,6 +221,7 @@ class EditorActivity : AppCompatActivity() {
                 openAlignPanel()
             }
             quickC.visibility = View.GONE
+            quickD.visibility = View.GONE
         }
     }
 
@@ -499,6 +514,7 @@ class EditorActivity : AppCompatActivity() {
         quickA = quickAction()
         quickB = quickAction()
         quickC = quickAction()
+        quickD = quickAction()
         quickActions = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.END
@@ -506,6 +522,7 @@ class EditorActivity : AppCompatActivity() {
             addView(quickA)
             addView(quickB)
             addView(quickC)
+            addView(quickD)
         }
         val quickBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -807,6 +824,7 @@ class EditorActivity : AppCompatActivity() {
         canvas.onStripHighlight = { idx -> strip.setDragTarget(idx) }
         canvas.onItemDropToPage = { item, idx -> transferItemTo(item, idx) }
         canvas.onGuideEditStart = { beginDiscreteChange() }
+        canvas.onGuidePicked = { updateQuickMenu() }
         canvas.onGuidesChanged = {
             scheduleSave()
             strip.refresh()

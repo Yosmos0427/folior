@@ -41,7 +41,9 @@ data class Project(
                 p.guides.add(Guide(
                     angle = g.optDouble("a", 0.0).toFloat(),
                     axMm = g.optDouble("x", 0.0).toFloat(),
-                    ayMm = g.optDouble("y", 0.0).toFloat()))
+                    ayMm = g.optDouble("y", 0.0).toFloat(),
+                    group = g.optInt("g", 0),
+                    role = g.optInt("r", 0)))
             }
             return p
         }
@@ -62,6 +64,8 @@ data class Project(
                 put("a", num(g.angle))
                 put("x", num(g.axMm))
                 put("y", num(g.ayMm))
+                put("g", g.group)
+                put("r", g.role)
             })
         }
         o.put("guides", gs)
@@ -112,7 +116,11 @@ data class Page(
 data class Guide(
     var angle: Float = 0f,     // 度，0 = 水平，归一到 (-90, 90]
     var axMm: Float = 0f,      // 锚点相对内容中心的横向偏移
-    var ayMm: Float = 0f       // 纵向偏移
+    var ayMm: Float = 0f,      // 纵向偏移
+    /** 镜像组 id，0 = 独立的一条线。同组四条关于页面中线两两对称。 */
+    var group: Int = 0,
+    /** 组内角色：0 原线 / 1 左右镜像 / 2 上下镜像 / 3 对角镜像 */
+    var role: Int = 0
 )
 
 /** 页面实际宽高（mm）：页级覆盖优先，回退项目默认 */

@@ -124,6 +124,9 @@ class PageCanvas @JvmOverloads constructor(
     /** 开始拖动指示线：Activity 借此记录操作前快照 */
     var onGuideEditStart: (() -> Unit)? = null
 
+    /** 当前线换成另一条（点选）：Activity 据此刷新菜单里「镜像 / 解除」的文案 */
+    var onGuidePicked: (() -> Unit)? = null
+
     private var activeGuide: Guide? = null
     private var guideDragMode = 0          // 0=无 1=平移 2=旋转
     private var guideStartOffset = 0f
@@ -869,11 +872,110 @@ class PageCanvas @JvmOverloads constructor(
     fun removeActiveGuide(): Boolean {
         val p = project ?: return false
         val g = activeGuide ?: p.guides.lastOrNull() ?: return false
+        val gid = g.group
         p.guides.removeAll { it === g }
+        // 组里只剩一条时已经没有镜像对象，恢复成独立线
+        if (gid != 0) {
+            val rest = p.guides.filter { it.group == gid }
+            if (rest.size < 2) rest.forEach { it.group = 0; it.role = 0 }
+        }
         activeGuide = null
         onGuidesChanged?.invoke()
         invalidate()
         return true
+    }
+
+    // ---------------- 镜像 ----------------
+
+    /** 当前操作对象：选中的那条，没有就取最后加的一条（与删除的行为一致） */
+    private fun currentGuide(): Guide? = activeGuide ?: project?.guides?.lastOrNull()
+
+    /** 当前线是否在镜像组里（Activity 据此把菜单项换成「解除」） */
+    val activeGuideMirrored: Boolean get() = (currentGuide()?.group ?: 0) != 0
+
+    /**
+     * 镜像变换：把一条线的几何投射到组内某个角色。
+     *
+     * 线是无向的，所以关于竖直轴或水平轴反射后角度都是 -θ，区别只在锚点；
+     * 对角角色等于绕中心转 180°，角度不变、两个锚点分量都取反。
+     * 每个变换都是自逆的（做两次回到原样），所以「由镜像线反算原线」也用它。
+     */
+    private fun mirrorGeometry(angle: Float, ax: Float, ay: Float, role: Int): FloatArray {
+        val a = normalizeGuideAngle(angle)
+        return when (role) {
+            1 -> floatArrayOf(normalizeGuideAngle(-a), -ax, ay)   // 左右镜像
+            2 -> floatArrayOf(normalizeGuideAngle(-a), ax, -ay)   // 上下镜像
+            3 -> floatArrayOf(a, -ax, -ay)                        // 对角镜像
+            else -> floatArrayOf(a, ax, ay)
+        }
+    }
+
+    /**
+     * 给当前线建立镜像组：原线 + 左右 + 上下 + 对角，共四条，两两关于页面中线对称。
+     * 建立之后拖或转任意一条，其余三条同步跟上。
+     */
+    fun addGuideMirrors(): Boolean {
+        val p = project ?: return false
+        val g = currentGuide() ?: return false
+        activeGuide = g
+        if (g.group != 0) return false
+        val page = currentPage()
+        val w = page?.widthMm(p) ?: 210f
+        val h = page?.heightMm(p) ?: 297f
+        val a0 = normalizeGuideAngle(g.angle)
+        var x0 = g.axMm
+        var y0 = g.ayMm
+        // 线压在页面中线上时，镜像过去仍落在原处，四条会叠成一条——
+        // 先挪到四分之一处，让四象限各自看得见
+        if (abs(x0) < w * 0.05f) x0 = -w * 0.25f
+        if (abs(y0) < h * 0.05f) y0 = -h * 0.25f
+        g.angle = a0; g.axMm = x0; g.ayMm = y0
+
+        val gid = (p.guides.maxOfOrNull { it.group } ?: 0) + 1
+        g.group = gid; g.role = 0
+        for (role in 1..3) {
+            val v = mirrorGeometry(a0, x0, y0, role)
+            p.guides.add(Guide(angle = v[0], axMm = v[1], ayMm = v[2],
+                group = gid, role = role))
+        }
+        onGuidesChanged?.invoke()
+        invalidate()
+        return true
+    }
+
+    /** 解除当前线所在的镜像组：四条各自独立，之后各改各的。 */
+    fun unlinkActiveMirror(): Boolean {
+        val p = project ?: return false
+        val g = currentGuide() ?: return false
+        activeGuide = g
+        if (g.group == 0) return false
+        val gid = g.group
+        for (q in p.guides) if (q.group == gid) { q.group = 0; q.role = 0 }
+        onGuidesChanged?.invoke()
+        invalidate()
+        return true
+    }
+
+    /**
+     * 组内一条线被拖动/旋转后，把其余成员同步到镜像位置。
+     *
+     * 用户拖的可能是任意一条（含镜像线），所以先按它的角色反算回原线几何，
+     * 再按各自角色派生——变换自逆，反算与正算同一套。
+     */
+    private fun syncMirrorGroup(from: Guide) {
+        if (from.group == 0) return
+        val p = project ?: return
+        val members = p.guides.filter { it.group == from.group }
+        if (members.size < 2) {          // 只剩自己，镜像关系自动失效
+            from.group = 0; from.role = 0
+            return
+        }
+        val base = mirrorGeometry(from.angle, from.axMm, from.ayMm, from.role)
+        for (q in members) {
+            if (q === from) continue
+            val v = mirrorGeometry(base[0], base[1], base[2], q.role)
+            q.angle = v[0]; q.axMm = v[1]; q.ayMm = v[2]
+        }
     }
 
     fun clearGuides() {
@@ -915,9 +1017,11 @@ class PageCanvas @JvmOverloads constructor(
                 if (hit == null) {
                     activeGuide = null; guideDragMode = 0
                 } else {
+                    val changed = hit.first !== activeGuide
                     activeGuide = hit.first
                     guideDragMode = hit.second
                     lastTouch.set(ev.x, ev.y)
+                    if (changed) onGuidePicked?.invoke()
                     onGuideEditStart?.invoke()
                 }
                 invalidate()
@@ -945,6 +1049,8 @@ class PageCanvas @JvmOverloads constructor(
                         atan2((ev.y - cy).toDouble(), (ev.x - cx).toDouble())).toFloat()
                     g.angle = snapGuideAngle(deg)
                 }
+                // 组内其余三条跟着做镜像，始终与这条保持对称
+                syncMirrorGroup(g)
                 lastTouch.set(ev.x, ev.y)
                 invalidate()
                 return true
