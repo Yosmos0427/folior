@@ -25,7 +25,8 @@ private const val SNAP_TOL_DP = 8f
  * - 双指：缩放 + 旋转（吸附 0/90/180/270，并与指示线平行）
  * - 双击照片：裁切
  * - 空白处左右滑动：翻跨页
- * - 指示线模式：拖线体平移、拖两端旋转（吸附 0/30/45/60/90）
+ * - 指示线模式：拖线体平移、拖两端旋转（吸附 0/30/45/60/90 与元素边方向；
+ *   平移时吸到页面边/中线与元素的边/中心/角点）
  *
  * 跨页模式（横屏摄影书）：左页/右页并排显示，元素坐标可越出本页边界实现跨页展示。
  */
@@ -129,8 +130,11 @@ class PageCanvas @JvmOverloads constructor(
 
     private var activeGuide: Guide? = null
     private var guideDragMode = 0          // 0=无 1=平移 2=旋转
-    private var guideStartOffset = 0f
-    private var guideStartAngle = 0f
+    // 平移吸附：手指位置与吸附后的位置分开记，继续拖超过容差自然脱离（与元素拖动同一套思路）
+    private var guideRawAx = 0f
+    private var guideRawAy = 0f
+    private var guideSnapPoint: PointF? = null   // 吸住的目标点（内容像素，仅用于画提示）
+    private var guideSnapKind = SnapKind.PAGE
 
 
     // 空白滑动翻页
@@ -455,7 +459,7 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     /** 书脊细节（折痕 / 缝线 / 金属环），画在内容之上 */
-    private fun drawSpineDetail(canvas: Canvas, p: Project) {
+    private fun drawSpineDetail(canvas: Canvas) {
         val rect = spineRect() ?: return
         val cx = (slots[0].rect.right + slots[1].rect.left) / 2f
         when (Prefs.spineStyle(context)) {
@@ -626,7 +630,7 @@ class PageCanvas @JvmOverloads constructor(
 
             // 书脊细节压在最上层：跨页大图会被折痕/缝线/金属环「分割」，
             // 与实体书摊开时的观感一致
-            if (spreadMode && p.type == Project.TYPE_BOOK) drawSpineDetail(canvas, p)
+            if (spreadMode && p.type == Project.TYPE_BOOK) drawSpineDetail(canvas)
         }
 
         // 绘制模式：落笔中的实时笔画预览（抬笔后成为正式元素）
@@ -757,7 +761,6 @@ class PageCanvas @JvmOverloads constructor(
         for (g in p.guides) {
             val rad = Math.toRadians(g.angle.toDouble())
             val ux = cos(rad).toFloat(); val uy = sin(rad).toFloat()
-            val nx = -uy; val ny = ux
             val cx = center.x + g.axMm * pxPerMm
             val cy = center.y + g.ayMm * pxPerMm
             val on = guideMode && g === activeGuide
@@ -780,6 +783,18 @@ class PageCanvas @JvmOverloads constructor(
                 hp.color = 0xFF000000.toInt()
                 canvas.drawCircle(cx + ux * off, cy + uy * off, hr, hp)
                 canvas.drawCircle(cx - ux * off, cy - uy * off, hr, hp)
+                // 平移吸附时标出吸到的那个参考点（页面边角 / 元素边角中心）
+                val sp = guideSnapPoint
+                if (guideDragMode == 1 && sp != null) {
+                    val r2 = 6f * d / viewScale
+                    val pp = Paint(Paint.ANTI_ALIAS_FLAG)
+                    pp.style = Paint.Style.STROKE
+                    pp.strokeWidth = 1.6f * d / viewScale
+                    pp.color = snapColor(guideSnapKind)
+                    canvas.drawCircle(sp.x, sp.y, r2, pp)
+                    canvas.drawLine(sp.x - r2 * 1.9f, sp.y, sp.x + r2 * 1.9f, sp.y, pp)
+                    canvas.drawLine(sp.x, sp.y - r2 * 1.9f, sp.x, sp.y + r2 * 1.9f, pp)
+                }
             }
         }
     }
@@ -991,18 +1006,135 @@ class PageCanvas @JvmOverloads constructor(
         return if (bestD <= 2.5f) best else base
     }
 
+    // ---------------- 指示线自身的吸附 ----------------
+
+    /** 吸附候选：位置（内容像素）+ 来源，来源只用来决定提示颜色 */
+    private class GuideTarget(val x: Float, val y: Float, val kind: SnapKind)
+
+    /**
+     * 工作区里现成的参考位置：
+     * 页面四角、四边中点、页面中心（也就是页面边与居中线），
+     * 以及每个元素的中心、四角、四边中点（随元素旋转一起转）。
+     *
+     * 指示线平移时吸到这些点上，等于吸到「页面边 / 页面中线 / 元素边 / 元素中心」
+     * ——斜线也能因此正好穿过元素中心或页角。
+     */
+    private fun guideTargets(): List<GuideTarget> {
+        val p = project ?: return emptyList()
+        val res = ArrayList<GuideTarget>(64)
+        val d = resources.displayMetrics.density
+        val minSize = 4f * d / viewScale
+        for (slot in slots) {
+            val page = p.pages.getOrNull(slot.index) ?: continue
+            val r = slot.rect
+            // 页面：四角 + 四边中点 + 中心
+            for (a in -1..1) for (b in -1..1) {
+                if (a == 0 && b == 0) continue
+                res.add(GuideTarget(
+                    r.centerX() + a * r.width() / 2f,
+                    r.centerY() + b * r.height() / 2f, SnapKind.PAGE))
+            }
+            res.add(GuideTarget(r.centerX(), r.centerY(), SnapKind.PAGE))
+            // 元素：中心 + 四角 + 四边中点
+            for (it in page.items) {
+                if (it.type == Item.TYPE_STROKE) continue
+                val hw = it.w * r.width() / 2f
+                val hh = it.h * r.height() / 2f
+                if (hw < minSize && hh < minSize) continue
+                val cx = r.left + (it.x + it.w / 2f) * r.width()
+                val cy = r.top + (it.y + it.h / 2f) * r.height()
+                val rad = Math.toRadians(it.rotation.toDouble()).toFloat()
+                val ux = cos(rad); val uy = sin(rad)
+                val vx = -sin(rad); val vy = cos(rad)
+                res.add(GuideTarget(cx, cy, SnapKind.ELEMENT))
+                for (a in -1..1) for (b in -1..1) {
+                    if (a == 0 && b == 0) continue
+                    res.add(GuideTarget(
+                        cx + a * hw * ux + b * hh * vx,
+                        cy + a * hw * uy + b * hh * vy, SnapKind.ELEMENT))
+                }
+            }
+        }
+        return res
+    }
+
+    /**
+     * 指示线平移吸附：把线沿法线方向挪到最近的那个参考点所在的线上，最多 8dp 屏幕。
+     *
+     * 只改显示值——原始手指位置留在 guideRawAx/Ay，继续拖就越过目标自然脱离，
+     * 不会出现"吸住拽不走"。
+     */
+    private fun snapGuideTranslate(g: Guide, pxPerMm: Float) {
+        val center = contentCenterPx()
+        if (center == null) { guideSnapPoint = null; return }
+        val tolPx = SNAP_TOL_DP * resources.displayMetrics.density / viewScale
+        val rad = Math.toRadians(g.angle.toDouble())
+        val nx = -sin(rad).toFloat(); val ny = cos(rad).toFloat()
+        val ax = center.x + g.axMm * pxPerMm
+        val ay = center.y + g.ayMm * pxPerMm
+        var best: GuideTarget? = null
+        var bestD = Float.MAX_VALUE
+        for (t in guideTargets()) {
+            val dist = (t.x - ax) * nx + (t.y - ay) * ny
+            if (abs(dist) <= tolPx && abs(dist) < abs(bestD)) { bestD = dist; best = t }
+        }
+        if (best == null) { guideSnapPoint = null; return }
+        g.axMm += nx * bestD / pxPerMm
+        g.ayMm += ny * bestD / pxPerMm
+        guideSnapPoint = PointF(best.x, best.y)
+        guideSnapKind = best.kind
+    }
+
+    /** 两条无向直线的夹角差（度，0..90） */
+    private fun guideAngleDiff(a: Float, b: Float): Float {
+        val dd = abs(normalizeGuideAngle(a) - normalizeGuideAngle(b))
+        return if (dd > 90f) 180f - dd else dd
+    }
+
+    /**
+     * 指示线旋转吸附：固定角（0/30/45/60/90）之外，还吸到元素的边方向。
+     * 元素的边有两个方向（rotation 与 rotation+90），线本身也无向，一律按 0..90 比。
+     */
+    private fun snapGuideAngleWithItems(deg: Float): Float {
+        val a = normalizeGuideAngle(deg)
+        val fixed = snapGuideAngle(deg)
+        var best = a
+        var bestD = Float.MAX_VALUE
+        if (abs(fixed - a) > 0.01f) { best = fixed; bestD = abs(fixed - a) }
+        val p = project
+        if (p != null) {
+            for (slot in slots) {
+                val page = p.pages.getOrNull(slot.index) ?: continue
+                for (it in page.items) {
+                    if (it.type == Item.TYPE_STROKE) continue
+                    val r = ((it.rotation % 180f) + 180f) % 180f
+                    for (k in 0..1) {
+                        val cand = normalizeGuideAngle(r + k * 90f)
+                        val dd = guideAngleDiff(a, cand)
+                        if (dd < bestD) { bestD = dd; best = cand }
+                    }
+                }
+            }
+        }
+        return if (bestD <= 3f) best else a
+    }
+
     private fun guideTouch(ev: MotionEvent): Boolean {
         val p = project ?: return true
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 val hit = hitGuide(ev.x, ev.y)
                 if (hit == null) {
-                    activeGuide = null; guideDragMode = 0
+                    activeGuide = null; guideDragMode = 0; guideSnapPoint = null
                 } else {
                     val changed = hit.first !== activeGuide
                     activeGuide = hit.first
                     guideDragMode = hit.second
                     lastTouch.set(ev.x, ev.y)
+                    // 记下未吸附的原始锚点：每次移动都从它起算，吸附只改显示值
+                    guideRawAx = hit.first.axMm
+                    guideRawAy = hit.first.ayMm
+                    guideSnapPoint = null
                     if (changed) onGuidePicked?.invoke()
                     onGuideEditStart?.invoke()
                 }
@@ -1021,15 +1153,19 @@ class PageCanvas @JvmOverloads constructor(
                     val rad = Math.toRadians(g.angle.toDouble())
                     val nx = -sin(rad).toFloat(); val ny = cos(rad).toFloat()
                     val along = (ev.x - lastTouch.x) * nx + (ev.y - lastTouch.y) * ny
-                    g.axMm += nx * along / pxPerMm
-                    g.ayMm += ny * along / pxPerMm
+                    guideRawAx += nx * along / pxPerMm
+                    guideRawAy += ny * along / pxPerMm
+                    g.axMm = guideRawAx
+                    g.ayMm = guideRawAy
+                    // 线也参与吸附：吸到页面四边/中线、元素的边与中心等既有参考位置
+                    snapGuideTranslate(g, pxPerMm)
                 } else {
-                    // 旋转：绕锚点转
+                    // 旋转：绕锚点转；除固定角外还吸到元素的边方向
                     val cx = center.x + g.axMm * pxPerMm
                     val cy = center.y + g.ayMm * pxPerMm
                     val deg = Math.toDegrees(
                         atan2((ev.y - cy).toDouble(), (ev.x - cx).toDouble())).toFloat()
-                    g.angle = snapGuideAngle(deg)
+                    g.angle = snapGuideAngleWithItems(deg)
                 }
                 // 组内其余三条跟着做镜像，始终与这条保持对称
                 syncMirrorGroup(g)
@@ -1040,6 +1176,8 @@ class PageCanvas @JvmOverloads constructor(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (guideDragMode != 0) onGuidesChanged?.invoke()
                 guideDragMode = 0
+                guideSnapPoint = null
+                invalidate()
                 return true
             }
         }
@@ -1648,7 +1786,7 @@ class PageCanvas @JvmOverloads constructor(
             }
         }
         // 指示线：近水平参与纵向、近垂直参与横向
-        addGuideTargets(acc, vertical, slot, p, left + w / 2f, top + h / 2f)
+        addGuideTargets(acc, vertical, slot, p, left + w / 2f)
         // 展览墙：对齐到整厘米
         if (p.type == Project.TYPE_EXHIBITION) {
             val mm = if (vertical) page.widthMm(p) else page.heightMm(p)
@@ -1696,9 +1834,7 @@ class PageCanvas @JvmOverloads constructor(
                 acc.add(o.y + o.h, SnapKind.ELEMENT)
             }
         }
-        addGuideTargets(acc, vertical, slot, p,
-            if (vertical) center else crossCenter,
-            if (vertical) crossCenter else center)
+        addGuideTargets(acc, vertical, slot, p, if (vertical) center else crossCenter)
         if (p.type == Project.TYPE_EXHIBITION) {
             val mm = if (vertical) page.widthMm(p) else page.heightMm(p)
             val step = 10f / mm.coerceAtLeast(1f)
@@ -1760,8 +1896,7 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     private fun addGuideTargets(
-        acc: AxisSnapper, vertical: Boolean, slot: Slot, p: Project,
-        cxN: Float, cyN: Float
+        acc: AxisSnapper, vertical: Boolean, slot: Slot, p: Project, cxN: Float
     ) {
         if (p.guides.isEmpty()) return
         val center = contentCenterPx() ?: return
@@ -1770,7 +1905,6 @@ class PageCanvas @JvmOverloads constructor(
         val pxPerMm = slot.rect.width() / wmm
         for (g in p.guides) {
             val rad = Math.toRadians(g.angle.toDouble())
-            val nx = -sin(rad).toFloat(); val ny = cos(rad).toFloat()
             val px = center.x + g.axMm * pxPerMm
             val py = center.y + g.ayMm * pxPerMm
             if (vertical) {
