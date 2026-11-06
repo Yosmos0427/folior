@@ -3,7 +3,6 @@ package com.yussy.folior.store
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.BitmapRegionDecoder
 import android.net.Uri
 import android.util.LruCache
 import androidx.exifinterface.media.ExifInterface
@@ -385,10 +384,6 @@ object Store {
     // 上限按可用堆分配：large 必须能装下「一张 24MP 原图」（约 96MB），
     // 否则放进去立刻被淘汰，等于每一帧都重新解码——越放大越卡就是这么来的。
     private val heapMb = (Runtime.getRuntime().maxMemory() / (1024 * 1024)).toInt()
-    private val memThumb = object : LruCache<String, Bitmap>(
-        (heapMb / 32).coerceIn(8, 16) * 1024 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap) = sizeOfBitmap(key, value)
-    }
     private val memWork = object : LruCache<String, Bitmap>(
         (heapMb / 6).coerceIn(24, 64) * 1024 * 1024) {
         override fun sizeOf(key: String, value: Bitmap) = sizeOfBitmap(key, value)
@@ -400,8 +395,7 @@ object Store {
 
     private fun cacheFor(src: Int) = if (src == SRC_ORIGINAL) memLarge else memWork
 
-    private fun cacheKey(imgId: String, maxDim: Int, src: Int, prefix: String) =
-        "$prefix$imgId@$maxDim@$src"
+    private fun cacheKey(imgId: String, maxDim: Int, src: Int) = "$imgId@$maxDim@$src"
 
     /**
      * 通用下采样解码（先读尺寸算 sample，再真正解码）。OOM 返回 null 由调用方降档。
@@ -432,11 +426,9 @@ object Store {
         return orig
     }
 
-    private fun decodeImage(
-        c: Context, imgId: String, maxDim: Int, src: Int,
-        cache: LruCache<String, Bitmap> = cacheFor(src), prefix: String = ""
-    ): Bitmap? {
-        val key = cacheKey(imgId, maxDim, src, prefix)
+    private fun decodeImage(c: Context, imgId: String, maxDim: Int, src: Int): Bitmap? {
+        val cache = cacheFor(src)
+        val key = cacheKey(imgId, maxDim, src)
         cache.get(key)?.let { return it }
         val f: File = (if (src == SRC_ORIGINAL) imageFile(c, imgId) else workFileFor(c, imgId))
             ?: return null
@@ -458,9 +450,9 @@ object Store {
      * 用 snapshot 而不是固定档位查表——渲染请求的尺寸是任意整数（按元素占版宽度算出来的）。
      */
     private fun bestCached(
-        cache: LruCache<String, Bitmap>, imgId: String, maxDim: Int, src: Int, prefix: String = ""
+        cache: LruCache<String, Bitmap>, imgId: String, maxDim: Int, src: Int
     ): Bitmap? {
-        val tag = "$prefix$imgId@"
+        val tag = "$imgId@"
         var best: Bitmap? = null
         var bestDim = -1
         for ((k, v) in cache.snapshot()) {
@@ -491,7 +483,7 @@ object Store {
         val src = if (src0 == SRC_ORIGINAL && maxDim0 <= PROXY_MAX_DIM) SRC_PROXY else src0
         val maxDim = normDim(maxDim0, src)
         val cache = cacheFor(src)
-        cache.get(cacheKey(imgId, maxDim, src, ""))?.let { return it }
+        cache.get(cacheKey(imgId, maxDim, src))?.let { return it }
         val smaller = bestCached(cache, imgId, maxDim, src)
         if (smaller != null) {
             requestDecode(c, imgId, maxDim, src)
@@ -505,16 +497,6 @@ object Store {
             }
         }
         return decodeImage(c, imgId, maxDim, src)
-    }
-
-    /** 兼容旧调用：默认走工作图。 */
-    fun decodeFull(c: Context, imgId: String, maxDim: Int = 2048): Bitmap? =
-        decodeFor(c, imgId, maxDim, SRC_PROXY)
-
-    /** 缩略图（独立缓存，不被大图挤掉）。 */
-    fun decodeThumb(c: Context, imgId: String, maxDim: Int = 320): Bitmap? {
-        memThumb.get(cacheKey(imgId, maxDim, SRC_PROXY, "t"))?.let { return it }
-        return decodeImage(c, imgId, maxDim, SRC_PROXY, memThumb, "t")
     }
 
     // ---- 后台解码：不占 UI 线程，完成后通知订阅者重绘 ----
@@ -535,7 +517,7 @@ object Store {
     fun requestDecode(c: Context, imgId: String, maxDim0: Int, src0: Int) {
         val src = if (src0 == SRC_ORIGINAL && maxDim0 <= PROXY_MAX_DIM) SRC_PROXY else src0
         val maxDim = normDim(maxDim0, src)
-        val key = cacheKey(imgId, maxDim, src, "")
+        val key = cacheKey(imgId, maxDim, src)
         if (!inFlight.add(key)) return
         val app = c.applicationContext
         decodePool.execute {
@@ -547,11 +529,6 @@ object Store {
             }
             mainHandler.post { decodeListeners.forEach { it() } }
         }
-    }
-
-    /** 预取：翻页/放大前先把目标页的图解码好，翻过去就不用等。 */
-    fun prefetch(c: Context, imgIds: Collection<String>, maxDim: Int, src: Int) {
-        for (id in imgIds) requestDecode(c, id, maxDim, src)
     }
 
     // ---------- .folio 包（zip）导出 / 导入 ----------

@@ -66,7 +66,7 @@ class FramingPanel(context: Context) : LinearLayout(context) {
             this.text = text
             textSize = 11.5f
             letterSpacing = 0.06f
-            setTextColor(0xFF8A8A84.toInt())
+            setTextColor(Palette.MUTED)
             setPadding(px(2f), px(10f), 0, px(5f))
         }
 
@@ -74,12 +74,12 @@ class FramingPanel(context: Context) : LinearLayout(context) {
             this.text = text
             textSize = 13f
             gravity = Gravity.CENTER
-            setTextColor(if (selected) 0xFFB5442A.toInt() else 0xFF4A4A45.toInt())
+            setTextColor(if (selected) Palette.ACCENT else 0xFF4A4A45.toInt())
             setPadding(px(13f), px(7f), px(13f), px(7f))
             background = GradientDrawable().apply {
                 cornerRadius = px(8f).toFloat()
                 setColor(if (selected) 0xFFFBEFEB.toInt() else 0x00000000)
-                setStroke(px(1f), if (selected) 0xFFB5442A.toInt() else 0xFFDDDDD6.toInt())
+                setStroke(px(1f), if (selected) Palette.ACCENT else Palette.LINE)
             }
             setOnClickListener { onTap() }
         }
@@ -89,7 +89,7 @@ class FramingPanel(context: Context) : LinearLayout(context) {
             this.text = text
             textSize = 12f
             gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
-            setTextColor(0xFF8A8A84.toInt())
+            setTextColor(Palette.MUTED)
             layoutParams = LinearLayout.LayoutParams(px(44f), ViewGroup.LayoutParams.MATCH_PARENT)
         }
 
@@ -118,7 +118,7 @@ class FramingPanel(context: Context) : LinearLayout(context) {
             }
             fun refresh() {
                 text.text = if (picked == null) "使用默认色" else picked
-                text.setTextColor(if (picked == null) 0xFFA8A8A0.toInt() else 0xFF1A1A18.toInt())
+                text.setTextColor(if (picked == null) Palette.MUTED_LIGHT else Palette.INK)
                 swatch.background = GradientDrawable().apply {
                     cornerRadius = px(6f).toFloat()
                     if (picked == null) {
@@ -137,7 +137,7 @@ class FramingPanel(context: Context) : LinearLayout(context) {
                 setPadding(px(8f), px(4f), px(12f), px(4f))
                 background = GradientDrawable().apply {
                     cornerRadius = px(8f).toFloat()
-                    setStroke(px(1f), 0xFFDDDDD6.toInt())
+                    setStroke(px(1f), Palette.LINE)
                 }
                 addView(swatch)
                 addView(text)
@@ -162,13 +162,13 @@ class FramingPanel(context: Context) : LinearLayout(context) {
                 text = label
                 textSize = 12f
                 gravity = Gravity.CENTER_VERTICAL or Gravity.RIGHT
-                setTextColor(0xFF8A8A84.toInt())
+                setTextColor(Palette.MUTED)
                 layoutParams = LinearLayout.LayoutParams(
                     px(labelWidthDp), ViewGroup.LayoutParams.MATCH_PARENT)
             })
             val value = TextView(context).apply {
                 textSize = 12f
-                setTextColor(0xFF1A1A18.toInt())
+                setTextColor(Palette.INK)
                 gravity = Gravity.CENTER
                 layoutParams = LinearLayout.LayoutParams(px(46f), ViewGroup.LayoutParams.WRAP_CONTENT)
                 text = "$initPct%"
@@ -195,7 +195,7 @@ class FramingPanel(context: Context) : LinearLayout(context) {
         presetRow.addView(TextView(context).apply {
             text = "✕"
             textSize = 16f
-            setTextColor(0xFFB5442A.toInt())
+            setTextColor(Palette.ACCENT)
             setPadding(px(2f), px(6f), px(14f), px(6f))
             setOnClickListener { onClosed?.invoke() }
         })
@@ -203,7 +203,7 @@ class FramingPanel(context: Context) : LinearLayout(context) {
             text = "快捷预设"
             textSize = 12f
             gravity = Gravity.CENTER_VERTICAL
-            setTextColor(0xFF8A8A84.toInt())
+            setTextColor(Palette.MUTED)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
         })
@@ -243,7 +243,7 @@ class FramingPanel(context: Context) : LinearLayout(context) {
             text = if (padExpanded) "∧" else "∨"
             textSize = 13f
             gravity = Gravity.CENTER
-            setTextColor(0xFF8A8A84.toInt())
+            setTextColor(Palette.MUTED)
             setPadding(px(8f), px(6f), px(2f), px(6f))
             contentDescription = if (padExpanded) "收起方向外沿" else "展开方向外沿"
             setOnClickListener {

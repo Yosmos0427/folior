@@ -17,6 +17,9 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.yussy.folior.model.*
 import com.yussy.folior.model.Project
+import com.yussy.folior.model.spreadPairs
+import com.yussy.folior.ui.singlePageText
+import com.yussy.folior.ui.spreadPageText
 import com.yussy.folior.store.Prefs
 import com.yussy.folior.store.Store
 import com.yussy.folior.ui.PageRenderer
@@ -399,17 +402,7 @@ class ViewerActivity : AppCompatActivity() {
 
     // ---------------- 分页 ----------------
 
-    /** 与编辑器一致的书籍配对：封面单右，中间 (2,3)(4,5)…，封底单左。 */
-    private fun spreads(): List<Pair<Int, Int>> {
-        val n = project.pages.size
-        val res = mutableListOf(-1 to 0)
-        var i = 1
-        while (i < n) {
-            if (i == n - 1 && n % 2 == 0) { res.add(i to -1); i++ }
-            else { res.add(i to (if (i + 1 < n) i + 1 else -1)); i += 2 }
-        }
-        return res
-    }
+    private fun spreads(): List<Pair<Int, Int>> = spreadPairs(project.pages.size)
 
     private fun currentSpread(): Pair<Int, Int> {
         val list = spreads()
@@ -440,16 +433,11 @@ class ViewerActivity : AppCompatActivity() {
     }
 
     private fun updateLabel() {
+        val total = project.pages.size
         val base = if (isSpreadMode()) {
             val (l, r) = currentSpread()
-            val range = when {
-                l >= 0 && r >= 0 -> "${l + 1}–${r + 1}"
-                r >= 0 -> "${r + 1}"
-                l >= 0 -> "${l + 1}"
-                else -> "-"
-            }
-            "$range / ${project.pages.size}"
-        } else "${pageIndex + 1} / ${project.pages.size}"
+            spreadPageText(l, r, total)
+        } else singlePageText(pageIndex, total)
         label.text = if (zoom > 1.001f) {
             val z = if (zoomIsNative) "100%" else String.format("×%.1f", zoom)
             "$base  ·  $z"

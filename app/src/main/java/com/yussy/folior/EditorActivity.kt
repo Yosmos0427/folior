@@ -144,7 +144,7 @@ class EditorActivity : AppCompatActivity() {
 
     private fun quickAction(): TextView = TextView(this).apply {
         textSize = 13f
-        setTextColor(0xFF1A1A18.toInt())
+        setTextColor(Palette.INK)
         gravity = Gravity.CENTER
         val padH = dp(14f)
         setPadding(padH, dp(9f), padH, dp(9f))
@@ -265,7 +265,7 @@ class EditorActivity : AppCompatActivity() {
             box.addView(TextView(this).apply {
                 text = t
                 textSize = 11.5f
-                setTextColor(0xFF8A8A84.toInt())
+                setTextColor(Palette.MUTED)
                 setPadding(dp(3f), dp(12f), 0, dp(5f))
             })
         }
@@ -278,7 +278,7 @@ class EditorActivity : AppCompatActivity() {
                         this.text = text
                         textSize = 13f
                         gravity = Gravity.CENTER
-                        setTextColor(0xFF1A1A18.toInt())
+                        setTextColor(Palette.INK)
                         maxLines = 1
                         background = GradientDrawable().apply {
                             cornerRadius = dp(8f).toFloat()
@@ -423,12 +423,12 @@ class EditorActivity : AppCompatActivity() {
         // 最外层 FrameLayout：看片台覆盖层与「展开」按钮需悬浮于整个编辑器之上
         val frame = android.widget.FrameLayout(this).apply {
             rootFrame = this
-            setBackgroundColor(0xFFFAFAF7.toInt())
+            setBackgroundColor(Palette.PAPER)
         }
         val root = LinearLayout(this).apply {
             rootLayout = this
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFFFAFAF7.toInt())
+            setBackgroundColor(Palette.PAPER)
         }
         frame.addView(root, android.widget.FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
@@ -449,13 +449,13 @@ class EditorActivity : AppCompatActivity() {
             text = project.title
             textSize = 16f
             maxLines = 1
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
         pageLabel = TextView(this).apply {
             text = "1 / 1"
             textSize = 12f
-            setTextColor(0xFF6B6B66.toInt())
+            setTextColor(Palette.INK_SOFT)
             setPadding(dp(10f), 0, dp(10f), 0)
         }
         top.addView(pageLabel)
@@ -464,7 +464,7 @@ class EditorActivity : AppCompatActivity() {
         undoBtn = TextView(this).apply {
             text = "↶"
             textSize = 17f
-            setTextColor(0xFF6B6B66.toInt())
+            setTextColor(Palette.INK_SOFT)
             setPadding(dp(2f), 0, dp(9f), 0)
             setOnClickListener { undo() }
         }
@@ -472,7 +472,7 @@ class EditorActivity : AppCompatActivity() {
         redoBtn = TextView(this).apply {
             text = "↷"
             textSize = 17f
-            setTextColor(0xFF6B6B66.toInt())
+            setTextColor(Palette.INK_SOFT)
             setPadding(0, 0, dp(6f), 0)
             setOnClickListener { redo() }
         }
@@ -480,7 +480,7 @@ class EditorActivity : AppCompatActivity() {
         top.addView(TextView(this).apply {
             text = "菜单"
             textSize = 13f
-            setTextColor(0xFFB5442A.toInt())
+            setTextColor(Palette.ACCENT)
             setPadding(dp(8f), dp(4f), dp(4f), dp(4f))
             setOnClickListener { showMenu() }
         })
@@ -513,7 +513,7 @@ class EditorActivity : AppCompatActivity() {
             text = "⋯"
             textSize = 19f
             gravity = Gravity.CENTER
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(0xFFFFFFFF.toInt())
@@ -573,7 +573,7 @@ class EditorActivity : AppCompatActivity() {
         fun selBtn(text: String, action: () -> Unit) = TextView(this).apply {
             this.text = text
             textSize = 13f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
             maxLines = 1
             isSingleLine = true
@@ -595,7 +595,7 @@ class EditorActivity : AppCompatActivity() {
                     canvas.invalidate()
                     scheduleSave()
                 }.setNegativeButton("取消", null).show()
-        }.setTextColor(0xFFB5442A.toInt())
+        }.setTextColor(Palette.ACCENT)
         // 2) 替换 / 编辑：照片=换图（保持位置、缩放、装裱不变）；其它类型=编辑
         selBtn("编辑") {
             val it = selected() ?: return@selBtn
@@ -677,7 +677,7 @@ class EditorActivity : AppCompatActivity() {
         // 颜色块
         colorChip = TextView(this).apply {
             textSize = 13f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             setPadding(dp(10f), dp(8f), dp(10f), dp(8f))
             setOnClickListener {
                 ColorPickerDialog.show(this@EditorActivity, "笔具颜色", brushColor) { c ->
@@ -695,7 +695,7 @@ class EditorActivity : AppCompatActivity() {
         eraserBtn = TextView(this).apply {
             text = "橡皮"
             textSize = 13f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
             setOnClickListener {
                 eraserOn = !eraserOn
@@ -711,7 +711,7 @@ class EditorActivity : AppCompatActivity() {
         drawBar.addView(TextView(this).apply {
             text = "撤销"
             textSize = 13f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
             setOnClickListener {
                 canvas.undoDraw()
@@ -724,8 +724,8 @@ class EditorActivity : AppCompatActivity() {
         drawBar.addView(TextView(this).apply {
             text = "完成"
             textSize = 13f
-            setTextColor(0xFFFAFAF7.toInt())
-            setBackgroundColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.PAPER)
+            setBackgroundColor(Palette.INK)
             setPadding(dp(16f), dp(8f), dp(16f), dp(8f))
             setOnClickListener { setDrawMode(false) }
         })
@@ -739,7 +739,7 @@ class EditorActivity : AppCompatActivity() {
         fun toolBtn(text: String, action: () -> Unit) = TextView(this).apply {
             this.text = text
             textSize = 13f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             setPadding(dp(8f), dp(10f), dp(8f), dp(10f))
             maxLines = 1
             isSingleLine = true
@@ -759,7 +759,7 @@ class EditorActivity : AppCompatActivity() {
         expandBtn = TextView(this).apply {
             text = "∧"
             textSize = 15f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             gravity = Gravity.CENTER
             setPadding(dp(14f), dp(9f), dp(14f), dp(9f))
             contentDescription = "展开看片台"
@@ -792,7 +792,7 @@ class EditorActivity : AppCompatActivity() {
         }
         ltInfo = TextView(this).apply {
             textSize = 11.5f
-            setTextColor(0xFF8A8A84.toInt())
+            setTextColor(Palette.MUTED)
         }
         ltHeader.addView(ltInfo, LinearLayout.LayoutParams(
             0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -1163,7 +1163,7 @@ class EditorActivity : AppCompatActivity() {
      */
     private fun applyExpandBtnState() {
         expandBtn.gravity = Gravity.CENTER
-        expandBtn.setTextColor(0xFF1A1A18.toInt())   // 与其它工具按钮同色，不做特殊强调
+        expandBtn.setTextColor(Palette.INK)   // 与其它工具按钮同色，不做特殊强调
         expandBtn.background = null
         expandBtn.textSize = 15f
         expandBtn.maxLines = 1
@@ -1192,17 +1192,7 @@ class EditorActivity : AppCompatActivity() {
         super.onBackPressed()
     }
 
-    /** 书的跨页配对：封面单右、封底单左，中间 (2,3)(4,5)… */
-    private fun spreads(): List<Pair<Int, Int>> {
-        val n = project.pages.size
-        val res = mutableListOf(-1 to 0)
-        var i = 1
-        while (i < n) {
-            if (i == n - 1 && n % 2 == 0) { res.add(i to -1); i++ }
-            else { res.add(i to (if (i + 1 < n) i + 1 else -1)); i += 2 }
-        }
-        return res
-    }
+    private fun spreads(): List<Pair<Int, Int>> = spreadPairs(project.pages.size)
 
     private fun spreadFor(idx: Int): Pair<Int, Int> {
         val list = spreads()
@@ -1439,16 +1429,9 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun updatePageLabel() {
-        pageLabel.text = if (spread) {
-            val l = canvas.leftIndex; val r = canvas.rightIndex
-            val range = when {
-                l >= 0 && r >= 0 -> "${l + 1}–${r + 1}"
-                r >= 0 -> "${r + 1}"
-                l >= 0 -> "${l + 1}"
-                else -> "-"
-            }
-            "$range / ${project.pages.size}"
-        } else "${pageIndex + 1} / ${project.pages.size}"
+        val total = project.pages.size
+        pageLabel.text = if (spread) spreadPageText(canvas.leftIndex, canvas.rightIndex, total)
+        else singlePageText(pageIndex, total)
     }
 
     /** 进入/退出绘制模式：底部工具条与笔具条互换，画布切换触摸通道。 */
@@ -1480,24 +1463,24 @@ class EditorActivity : AppCompatActivity() {
         for (i in brushBtns.indices) {
             val v = brushBtns[i]
             val active = i == cur && !eraserOn
-            v.setTextColor(if (active) 0xFFFAFAF7.toInt() else 0xFF1A1A18.toInt())
+            v.setTextColor(if (active) Palette.PAPER else Palette.INK)
             v.background = android.graphics.drawable.GradientDrawable().apply {
                 cornerRadius = dp(8f).toFloat()
-                setColor(if (active) 0xFF1A1A18.toInt() else 0x00000000)
+                setColor(if (active) Palette.INK else 0x00000000)
             }
         }
-        eraserBtn.setTextColor(if (eraserOn) 0xFFB5442A.toInt() else 0xFF1A1A18.toInt())
+        eraserBtn.setTextColor(if (eraserOn) Palette.ACCENT else Palette.INK)
         eraserBtn.background = android.graphics.drawable.GradientDrawable().apply {
             cornerRadius = dp(8f).toFloat()
             if (eraserOn) {
                 setColor(0x14B5442A)
-                setStroke(dp(1f), 0xFFB5442A.toInt())
+                setStroke(dp(1f), Palette.ACCENT)
             } else setColor(0x00000000)
         }
         // 颜色块：显示当前笔色
         colorChip.background = android.graphics.drawable.GradientDrawable().apply {
             cornerRadius = dp(8f).toFloat()
-            setColor(com.yussy.folior.model.parseColor(brushColor, 0xFF1A1A18.toInt()))
+            setColor(com.yussy.folior.model.parseColor(brushColor, Palette.INK))
             setStroke(dp(1f), 0x22000000)
         }
     }
@@ -1972,7 +1955,7 @@ class EditorActivity : AppCompatActivity() {
     private fun progressUi(title: String, initial: String): ProgressUi {
         val msg = TextView(this).apply {
             textSize = 12f
-            setTextColor(0xFF6B6B66.toInt())
+            setTextColor(Palette.INK_SOFT)
             setPadding(dp(20f), dp(4f), dp(20f), dp(10f))
             text = initial
         }

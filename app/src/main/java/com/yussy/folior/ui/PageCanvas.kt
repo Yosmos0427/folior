@@ -305,15 +305,6 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     /** 全选当前页（多选用） */
-    fun selectAllOnPage() {
-        val owner = currentPage() ?: return
-        selList.clear()
-        owner.items.filter { it.type != Item.TYPE_STROKE }.forEach { selList.add(it) }
-        selected = selList.firstOrNull()
-        onSelectionChanged?.invoke(selected)
-        invalidate()
-    }
-
     /** 直接设定选择集合（复制一组元素后选中副本时用） */
     fun setSelection(items: List<Item>) {
         selList.clear()
@@ -657,11 +648,11 @@ class PageCanvas @JvmOverloads constructor(
             rp.strokeWidth = 1f
             // 长度刻度文字：左对齐（贴在刻度右侧）
             val tp = Paint(Paint.ANTI_ALIAS_FLAG)
-            tp.color = 0xFF8A8A84.toInt()
+            tp.color = Palette.MUTED
             tp.textSize = 9f * dd
             // 高度刻度文字：右对齐（贴在刻度左侧，避免压到墙面）
             val tpV = Paint(Paint.ANTI_ALIAS_FLAG)
-            tpV.color = 0xFF8A8A84.toInt()
+            tpV.color = Palette.MUTED
             tpV.textSize = 9f * dd
             tpV.textAlign = Paint.Align.RIGHT
 
@@ -803,7 +794,7 @@ class PageCanvas @JvmOverloads constructor(
         canvas.rotate(it.rotation, cx, cy)
         val sp = Paint(Paint.ANTI_ALIAS_FLAG)
         sp.style = Paint.Style.STROKE
-        sp.color = 0xFFB5442A.toInt()
+        sp.color = Palette.ACCENT
         sp.strokeWidth = if (primary) 2f else 1.4f
         canvas.drawRect(cx - fw / 2f, cy - fh / 2f, cx + fw / 2f, cy + fh / 2f, sp)
         if (primary) {
@@ -816,14 +807,14 @@ class PageCanvas @JvmOverloads constructor(
             canvas.drawCircle(hx, hy, 5.5f * d, sp)
             sp.style = Paint.Style.STROKE
             sp.strokeWidth = 3f
-            sp.color = 0xFFB5442A.toInt()
+            sp.color = Palette.ACCENT
             canvas.drawCircle(hx, hy, 5.5f * d, sp)
             sp.style = Paint.Style.FILL
         }
         canvas.restore()
         if (reordering) {
             val tp = Paint(Paint.ANTI_ALIAS_FLAG)
-            tp.color = 0xFFB5442A.toInt()
+            tp.color = Palette.ACCENT
             tp.textSize = 30f
             tp.textAlign = Paint.Align.CENTER
             canvas.drawText("拖动调整层级", width / 2f, 40f, tp)
@@ -976,15 +967,6 @@ class PageCanvas @JvmOverloads constructor(
             val v = mirrorGeometry(base[0], base[1], base[2], q.role)
             q.angle = v[0]; q.axMm = v[1]; q.ayMm = v[2]
         }
-    }
-
-    fun clearGuides() {
-        val p = project ?: return
-        if (p.guides.isEmpty()) return
-        p.guides.clear()
-        activeGuide = null
-        onGuidesChanged?.invoke()
-        invalidate()
     }
 
     /**
@@ -1991,19 +1973,6 @@ class PageCanvas @JvmOverloads constructor(
     }
 
     /** 选中照片铺满整个跨页（跨书脊）。 */
-    fun spanSelected(): Boolean {
-        val it = selected ?: return false
-        if (!spreadMode || slots.size < 2) return false
-        val slot = slotOf(it) ?: return false
-        val isLeftSlot = slot === slots[0]
-        it.y = 0f; it.h = 1f
-        it.w = 2f
-        it.x = if (isLeftSlot) 0f else -1f
-        onModified?.invoke()
-        invalidate()
-        return true
-    }
-
     /** 90° 步进旋转（带吸附语义）。 */
     fun rotateSelected90() {
         val it = selected ?: return

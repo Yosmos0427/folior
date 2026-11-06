@@ -2,7 +2,6 @@ package com.yussy.folior.ui
 
 import android.app.AlertDialog
 import android.content.Context
-import android.view.LayoutInflater
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -44,7 +43,7 @@ object TextDialog {
         val colorBtn = TextView(ctx).apply {
             text = "颜色"
             setPadding(24, 24, 24, 8)
-            setTextColor(0xFFB5442A.toInt())
+            setTextColor(Palette.ACCENT)
             var picked = initialColor
             setOnClickListener {
                 ColorPickerDialog.show(ctx, "文字颜色", picked) { c -> picked = c; tag = c }
@@ -59,7 +58,7 @@ object TextDialog {
         val fontBtn = TextView(ctx).apply {
             text = "字体：" + Fonts.displayName(fontId)
             setPadding(0, 24, 0, 8)
-            setTextColor(0xFFB5442A.toInt())
+            setTextColor(Palette.ACCENT)
             typeface = Fonts.typeface(ctx, fontId)
             setOnClickListener {
                 FontPickerDialog.show(ctx, fontId) { id ->
@@ -82,7 +81,7 @@ object TextDialog {
             fun name() = when { lineHeight <= 1.25f -> "行距:紧"; lineHeight >= 1.7f -> "行距:宽"; else -> "行距:标" }
             text = name()
             setPadding(24, 24, 24, 8)
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             setOnClickListener {
                 lineHeight = when { lineHeight <= 1.25f -> 1.4f; lineHeight <= 1.5f -> 1.8f; else -> 1.2f }
                 text = name()
@@ -91,7 +90,7 @@ object TextDialog {
         val alignBtn = TextView(ctx).apply {
             text = "对齐: " + when (align) { 1 -> "中"; 2 -> "右"; else -> "左" }
             setPadding(24, 24, 24, 8)
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             setOnClickListener {
                 align = (align + 1) % 3
                 text = "对齐: " + when (align) { 1 -> "中"; 2 -> "右"; else -> "左" }
@@ -119,10 +118,10 @@ object TextDialog {
         return TextView(ctx).apply {
             text = s
             setPadding(24, 24, 24, 8)
-            setTextColor(if (state) 0xFFB5442A.toInt() else 0xFF1A1A18.toInt())
+            setTextColor(if (state) Palette.ACCENT else Palette.INK)
             setOnClickListener {
                 state = !state
-                setTextColor(if (state) 0xFFB5442A.toInt() else 0xFF1A1A18.toInt())
+                setTextColor(if (state) Palette.ACCENT else Palette.INK)
                 on(state)
             }
         }

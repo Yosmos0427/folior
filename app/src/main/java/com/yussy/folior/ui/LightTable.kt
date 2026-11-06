@@ -18,11 +18,9 @@ import com.yussy.folior.model.Page
 import com.yussy.folior.model.Project
 import com.yussy.folior.model.spillsLeft
 import com.yussy.folior.model.spillsRight
-import com.yussy.folior.model.heightMm
 import com.yussy.folior.model.leftNeighborOf
 import com.yussy.folior.model.renderSignature
 import com.yussy.folior.model.rightNeighborOf
-import com.yussy.folior.model.widthMm
 
 /**
  * 看片台（Light Table）：
@@ -372,7 +370,7 @@ class LightTable @JvmOverloads constructor(
             val badge = TextView(context).apply {
                 textSize = 9.5f
                 gravity = Gravity.CENTER
-                setTextColor(0xFF8A8A84.toInt())
+                setTextColor(Palette.MUTED)
             }
             cell.addView(badge, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, (18 * resources.displayMetrics.density).toInt())
@@ -423,15 +421,15 @@ class LightTable @JvmOverloads constructor(
                 setStroke(
                     ((if (selected || isDragging) 2f else 1f) * d).toInt(),
                     when {
-                        isDragging -> 0xFFB5442A.toInt()
-                        selected -> 0xFFB5442A.toInt()
+                        isDragging -> Palette.ACCENT
+                        selected -> Palette.ACCENT
                         else -> 0x1A000000
                     })
                 cornerRadius = 1.5f * d
             }
             holder.badge.text = "${pos + 1}"
             holder.badge.setTextColor(
-                if (selected) 0xFFB5442A.toInt() else 0xFF8A8A84.toInt())
+                if (selected) Palette.ACCENT else Palette.MUTED)
             holder.itemView.contentDescription = "第${pos + 1}页"
             holder.itemView.setOnClickListener {
                 val pp = holder.bindingAdapterPosition

@@ -53,11 +53,6 @@ object Prefs {
         else -> DPI_STANDARD
     }
 
-    fun pdfDpiLabel(c: Context): String = when (pdfDpiMode(c)) {
-        MODE_CUSTOM -> "自定义 ${pdfCustomDpi(c)} dpi"
-        else -> "${pdfDpi(c)} dpi"
-    }
-
     // ---------------- 体积上限 ----------------
 
     /** 体积上限（MB）；0 = 无上限 */
@@ -66,8 +61,6 @@ object Prefs {
     fun setPdfLimitMb(c: Context, mb: Int) {
         sp(c).edit().putInt(K_LIMIT_MB, mb.coerceIn(0, 2000)).apply()
     }
-
-    fun pdfLimitBytes(c: Context): Long = pdfLimitMb(c).toLong() * 1024L * 1024L
 
     fun pdfLimitLabel(c: Context): String {
         val mb = pdfLimitMb(c)

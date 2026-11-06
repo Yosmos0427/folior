@@ -6,7 +6,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.RectF
-import com.yussy.folior.model.Item
 import com.yussy.folior.model.Page
 import com.yussy.folior.model.Project
 import com.yussy.folior.model.spillsLeft

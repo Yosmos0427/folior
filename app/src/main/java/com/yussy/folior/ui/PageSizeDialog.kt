@@ -43,11 +43,11 @@ object PageSizeDialog {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             setSingleLine()
             setPadding(px(6f), px(11f), px(6f), px(11f))
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             background = GradientDrawable().apply {
                 cornerRadius = 8f * d
                 setColor(0xFFFFFFFF.toInt())
-                setStroke(px(1f), 0xFFDDDDD6.toInt())
+                setStroke(px(1f), Palette.LINE)
             }
         }
         val wIn = input(initW)
@@ -58,7 +58,7 @@ object PageSizeDialog {
         }
         val unit = TextView(ctx).apply {
             text = "mm"; textSize = 12f
-            setTextColor(0xFF8A8A84.toInt())
+            setTextColor(Palette.MUTED)
             setPadding(px(8f), 0, 0, 0)
         }
         row.addView(wIn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -70,7 +70,7 @@ object PageSizeDialog {
         root.addView(TextView(ctx).apply {
             text = "宽 × 高，可分别输入；范围 30 – 2000 mm"
             textSize = 11f
-            setTextColor(0xFFA8A8A0.toInt())
+            setTextColor(Palette.MUTED_LIGHT)
             setPadding(px(3f), px(6f), 0, 0)
         })
 
@@ -122,11 +122,11 @@ fun showWall(
         inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
         setSingleLine()
         setPadding(px(6f), px(11f), px(6f), px(11f))
-        setTextColor(0xFF1A1A18.toInt())
+        setTextColor(Palette.INK)
         background = GradientDrawable().apply {
             cornerRadius = 8f * d
             setColor(0xFFFFFFFF.toInt())
-            setStroke(px(1f), 0xFFDDDDD6.toInt())
+            setStroke(px(1f), Palette.LINE)
         }
     }
     val wIn = input(initWmm)
@@ -137,7 +137,7 @@ fun showWall(
     }
     val unit = TextView(ctx).apply {
         text = "m"; textSize = 12f
-        setTextColor(0xFF8A8A84.toInt())
+        setTextColor(Palette.MUTED)
         setPadding(px(8f), 0, 0, 0)
     }
     row.addView(wIn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -161,11 +161,11 @@ fun showWall(
                 setPadding(px(12f), px(8f), px(12f), px(8f))
                 background = GradientDrawable().apply {
                     cornerRadius = 8f * d
-                    setStroke(px(1f), 0xFFDDDDD6.toInt())
+                    setStroke(px(1f), Palette.LINE)
                 }
                 setOnClickListener {
                     wIn.setText(fmtM(w)); hIn.setText(fmtM(h))
-                    setTextColor(0xFFB5442A.toInt())
+                    setTextColor(Palette.ACCENT)
                 }
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                 rightMargin = px(8f)
@@ -177,7 +177,7 @@ fun showWall(
     root.addView(TextView(ctx).apply {
         text = "宽 × 高，单位米（m），可分别输入；范围 0.1 – 100 m"
         textSize = 11f
-        setTextColor(0xFFA8A8A0.toInt())
+        setTextColor(Palette.MUTED_LIGHT)
         setPadding(px(3f), px(8f), 0, 0)
     })
 
@@ -223,7 +223,7 @@ private fun makeBgRow(
         return GradientDrawable().apply {
             cornerRadius = 8f * d
             setColor(c)
-            setStroke(px(1f), 0xFFDDDDD6.toInt())
+            setStroke(px(1f), Palette.LINE)
         }
     }
 
@@ -238,7 +238,7 @@ private fun makeBgRow(
     followRow.addView(TextView(ctx).apply {
         text = "应用项目设置"
         textSize = 13f
-        setTextColor(0xFF1A1A18.toInt())
+        setTextColor(Palette.INK)
     }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     val check = TextView(ctx).apply { textSize = 16f }
     followRow.addView(check)
@@ -252,7 +252,7 @@ private fun makeBgRow(
     colorRow.addView(TextView(ctx).apply {
         text = "页面颜色"
         textSize = 13f
-        setTextColor(0xFF1A1A18.toInt())
+        setTextColor(Palette.INK)
     }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     val chip = TextView(ctx).apply {
         layoutParams = LinearLayout.LayoutParams(px(64f), px(34f))
@@ -261,7 +261,7 @@ private fun makeBgRow(
 
     fun sync() {
         check.text = if (follow) "✓" else "　"
-        check.setTextColor(if (follow) 0xFFB5442A.toInt() else 0xFFC0C0BA.toInt())
+        check.setTextColor(if (follow) Palette.ACCENT else 0xFFC0C0BA.toInt())
         val shown = if (follow) projectBg else (custom ?: projectBg)
         chip.background = chipDrawable(shown)
         chip.alpha = if (follow) 0.45f else 1f

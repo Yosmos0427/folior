@@ -72,7 +72,6 @@ data class Project(
         return o
     }
 
-    fun pageBg(page: Page): Int = parseColor(page.bg ?: defaultBg, 0xFFFFFFFF.toInt())
 }
 
 data class Page(
@@ -201,11 +200,6 @@ data class Item(
     var matRatio: Float = 0f,          // 衬材宽高比，0=跟随内容
     /** 照片实际打印宽度（mm），用于展览墙体按真实比例摆放；null = 未指定 */
     var printMm: Float? = null,
-    /**
-     * 旧版跨页标记，仅供旧工程读取兼容；跨页现由几何位置判定（见 [crossesHorizontally]），
-     * 不再读写此字段。
-     */
-    var span: Boolean = false,
     // text
     var text: String = "",
     var fontScale: Float = 0.04f,    // 字号 = 页高的比例
@@ -267,7 +261,6 @@ data class Item(
             if (it.matStyle == null && !o.isNull("textBg"))  // 旧文字背景 → 衬材
                 it.matStyle = o.optString("textBg")
             it.printMm = if (o.isNull("printMm")) null else o.optDouble("printMm").toFloat()
-            it.span = o.optBoolean("span", false)
             it.text = o.optString("text", "")
             it.fontScale = o.optDouble("fontScale", 0.04).toFloat()
             it.color = o.optString("color", "#1A1A18")
@@ -311,7 +304,6 @@ data class Item(
         o.put("matPad", num(Math.min(matPadX, matPadY), 0.08f))
         o.put("matRatio", num(matRatio))
         o.put("printMm", printMm?.let { num(it, 1f) } ?: JSONObject.NULL)
-        o.put("span", span)
         o.put("text", text)
         o.put("fontScale", num(fontScale, 0.04f))
         o.put("color", color); o.put("bold", bold); o.put("italic", italic)
@@ -325,12 +317,6 @@ data class Item(
         pts.forEach { ptsArr.put(num(it)) }
         o.put("pts", ptsArr)
         return o
-    }
-
-    fun bounds(rotated: Boolean = true): FloatArray {
-        // 返回 [cx, cy, hw, hh, rad] 中心 + 半宽高 + 弧度
-        val rad = if (rotated) Math.toRadians(rotation.toDouble()).toFloat() else 0f
-        return floatArrayOf(x + w / 2f, y + h / 2f, w / 2f, h / 2f, rad)
     }
 }
 

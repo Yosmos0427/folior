@@ -37,7 +37,7 @@ object FontPickerDialog {
                 col.addView(TextView(ctx).apply {
                     text = def.name
                     textSize = 16f
-                    setTextColor(if (picked) 0xFFB5442A.toInt() else 0xFF1A1A18.toInt())
+                    setTextColor(if (picked) Palette.ACCENT else Palette.INK)
                     if (tf != null) typeface = tf
                 })
                 col.addView(TextView(ctx).apply {

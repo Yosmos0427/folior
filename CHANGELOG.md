@@ -6,6 +6,18 @@ Android 摄影书 / 展览编排应用。目标设备 Galaxy S23 Ultra（Android
 >
 > **版本号规则**：正式发布前主版本为 0（`0.MINOR.PATCH`）；微调推进 PATCH，新功能推进 MINOR。历史 `1.x.y` 与 `0.x.y` 一一对应。
 
+## v0.37.2 — 代码整理
+
+无功能变化，界面与数据格式不变。
+
+- 界面配色收到 `ui/Palette` 一处，同一色值不再散落在十二个文件里
+- 跨页配对与页码文字抽成共用函数，编辑器与放映不再各写一份
+- 设置页两份几乎相同的刷新逻辑合并为一份
+- 删除无人调用的接口：缩略图缓存与 `decodeThumb`、`decodeFull`、`prefetch`、`spanSelected`、`clearGuides`、`selectAllOnPage`、`PageRenderer.drawPage`、`Prefs.pdfDpiLabel`、`pdfLimitBytes`
+- 缩略图缓存原本没有人读，一并删除，省下 8–16MB 堆
+- 删除废弃的跨页标记字段 `span`：旧工程里该键被忽略，跨页按几何位置判定
+- 删除未使用的资源与 import：`backup_rules.xml`、`ic_pages`、`accent` 色、`BtnGhost` 与 `MenuText` 样式
+
 ## v0.37.1 — 浮动菜单按钮定宽
 
 - 工作区右上角浮动菜单内的按钮改为**按四个汉字定宽**，四个按钮等宽，文字不再被裁，点击范围也更大

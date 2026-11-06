@@ -16,20 +16,6 @@ object PageRenderer {
         parseColor(page.bg ?: project.defaultBg, Color.WHITE)
 
     /** 单页完整绘制（自动裁切到页内）。pxHint 见 [drawItems]。 */
-    fun drawPage(
-        ctx: Context, project: Project, page: Page,
-        canvas: android.graphics.Canvas,
-        left: Float, top: Float, wPx: Float, hPx: Float,
-        highQuality: Boolean = false, pxHint: Int? = null, source: Int = Store.SRC_PROXY
-    ) {
-        drawPageBackground(project, page, canvas, RectF(left, top, left + wPx, top + hPx))
-        val save = canvas.save()
-        canvas.clipRect(left, top, left + wPx, top + hPx)
-        drawItems(ctx, project, page, canvas, RectF(left, top, left + wPx, top + hPx),
-            highQuality, pxHint, source = source)
-        canvas.restoreToCount(save)
-    }
-
     /**
      * 单页渲染，连同「邻页跨页照片溢入本页的那一半」。
      * 竖屏工作台与放映单页用它，保证看到的这一页与横屏双联里同一页完全一致。
