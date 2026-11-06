@@ -77,7 +77,7 @@ class PageStrip @JvmOverloads constructor(
 
     init {
         orientation = HORIZONTAL
-        setBackgroundColor(0xFFFAFAF7.toInt())
+        setBackgroundColor(Palette.PAPER)
         val d = resources.displayMetrics.density
 
         addArea = FrameLayout(context).apply {
@@ -260,17 +260,6 @@ class PageStrip @JvmOverloads constructor(
         }
     }
 
-    private fun setRevealed(pageId: String?) {
-        if (revealedPageId == pageId) return
-        revealedPageId = pageId
-        stripAdapter.notifyDataSetChanged()
-    }
-
-    private fun revealPx(): Float {
-        val d = resources.displayMetrics.density
-        return if (verticalMode) 38f * d else 44f * d
-    }
-
     private fun selectFromStrip(pos: Int) {
         revealedPageId = null       // 点其它页 / 点空白处 → 收起固定
         currentIndex = pos
@@ -374,8 +363,8 @@ class PageStrip @JvmOverloads constructor(
                 setColor(if (hovered) 0x24B5442A else Color.TRANSPARENT)
                 setStroke(((if (selected || hovered) 2f else 1f) * d).toInt(),
                     when {
-                        hovered -> 0xFFB5442A.toInt()
-                        selected -> 0xFFB5442A.toInt()
+                        hovered -> Palette.ACCENT
+                        selected -> Palette.ACCENT
                         else -> 0x14000000
                     })
                 cornerRadius = 1.5f * d
@@ -385,9 +374,9 @@ class PageStrip @JvmOverloads constructor(
             holder.badge.text = "${pos + 1}"
             holder.badge.setTextColor(
                 when {
-                    hovered -> 0xFFB5442A.toInt()
-                    selected -> 0xFFB5442A.toInt()
-                    else -> 0xFF8A8A84.toInt()
+                    hovered -> Palette.ACCENT
+                    selected -> Palette.ACCENT
+                    else -> Palette.MUTED
                 })
             holder.badge.width = (16 * d).toInt()
             holder.badge.setPadding(if (verticalMode) (3 * d).toInt() else 0, 0, 0, 0)

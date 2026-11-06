@@ -2,15 +2,12 @@ package com.yussy.folior
 
 import android.app.Activity
 import android.content.Intent
-import android.graphics.Bitmap
 import android.graphics.Color
-import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -21,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.yussy.folior.model.Project
 import com.yussy.folior.store.Store
 import com.yussy.folior.ui.ProjectDialog
+import com.yussy.folior.ui.Palette
 
 class MainActivity : AppCompatActivity() {
 
@@ -51,7 +49,7 @@ class MainActivity : AppCompatActivity() {
         val d = resources.displayMetrics.density
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFFFAFAF7.toInt())
+            setBackgroundColor(Palette.PAPER)
         }
         // 顶栏
         val top = LinearLayout(this).apply {
@@ -62,13 +60,13 @@ class MainActivity : AppCompatActivity() {
         top.addView(TextView(this).apply {
             text = "册页"
             textSize = 26f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
         top.addView(TextView(this).apply {
             text = "≡"                       // 三横线：收纳「导入」与「全局设置」
             textSize = 24f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             setPadding((18 * d).toInt(), (2 * d).toInt(), (12 * d).toInt(), (2 * d).toInt())
             setOnClickListener { showHomeMenu(it) }
         })
@@ -77,7 +75,7 @@ class MainActivity : AppCompatActivity() {
         root.addView(TextView(this).apply {
             text = "摄影书 · 展览编排"
             textSize = 12f
-            setTextColor(0xFF6B6B66.toInt())
+            setTextColor(Palette.INK_SOFT)
             letterSpacing = 0.1f
             setPadding((20 * d).toInt(), 0, (20 * d).toInt(), (14 * d).toInt())
         })
@@ -97,8 +95,8 @@ class MainActivity : AppCompatActivity() {
             text = "+ 新建照片集"
             textSize = 16f
             gravity = Gravity.CENTER
-            setTextColor(0xFFFAFAF7.toInt())
-            setBackgroundColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.PAPER)
+            setBackgroundColor(Palette.INK)
             setPadding(0, (16 * d).toInt(), 0, (16 * d).toInt())
             (layoutParams as? LinearLayout.LayoutParams)?.setMargins(
                 (20 * d).toInt(), (8 * d).toInt(), (20 * d).toInt(), (24 * d).toInt())
@@ -269,11 +267,11 @@ class MainActivity : AppCompatActivity() {
             }
             title = TextView(cell.context).apply {
                 textSize = 16f
-                setTextColor(0xFF1A1A18.toInt())
+                setTextColor(Palette.INK)
             }
             sub = TextView(cell.context).apply {
                 textSize = 12f
-                setTextColor(0xFF6B6B66.toInt())
+                setTextColor(Palette.INK_SOFT)
                 setPadding(0, (2 * d).toInt(), 0, 0)
             }
             col.addView(title); col.addView(sub)

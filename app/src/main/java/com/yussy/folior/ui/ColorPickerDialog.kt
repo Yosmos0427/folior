@@ -89,7 +89,7 @@ object ColorPickerDialog {
                     if (hex.equals(current, true)) {
                         post {
                             foreground = android.graphics.drawable.GradientDrawable().apply {
-                                setStroke(3, 0xFFB5442A.toInt())
+                                setStroke(3, Palette.ACCENT)
                             }
                         }
                     }
@@ -117,7 +117,7 @@ object ColorPickerDialog {
             text = "确定"
             gravity = Gravity.CENTER
             setPadding(24, 12, 24, 12)
-            setTextColor(0xFFB5442A.toInt())
+            setTextColor(Palette.ACCENT)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 gravity = Gravity.CENTER_VERTICAL

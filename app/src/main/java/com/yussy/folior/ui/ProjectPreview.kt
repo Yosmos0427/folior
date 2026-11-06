@@ -17,7 +17,6 @@ import kotlin.math.ceil
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 /**
  * 项目预览图：把全部页面 / 墙体按顺序平铺成**一张图片**，用于整体浏览项目概况。

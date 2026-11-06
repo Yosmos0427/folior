@@ -16,14 +16,4 @@
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:fontFamily">sans-serif</item>
     </style>
-
-    <style name="BtnGhost" parent="Widget.Material3.Button.TextButton">
-        <item name="android:textColor">@color/ink</item>
-        <item name="android:textSize">13sp</item>
-        <item name="android:letterSpacing">0.02</item>
-    </style>
-
-    <style name="MenuText">
-        <item name="android:textColor">@color/ink</item>
-    </style>
 </resources>

@@ -64,8 +64,8 @@ object ProjectDialog {
             setSingleLine()
             setPadding(px(12f), px(11f), px(12f), px(11f))
             background = boxBg(ctx)
-            setTextColor(0xFF1A1A18.toInt())
-            setHintTextColor(0xFFA8A8A0.toInt())
+            setTextColor(Palette.INK)
+            setHintTextColor(Palette.MUTED_LIGHT)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
@@ -103,7 +103,7 @@ object ProjectDialog {
             setSingleLine()
             setPadding(px(6f), px(11f), px(6f), px(11f))
             background = boxBg(ctx)
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
         }
         val wIn = sizeInput()
         val hIn = sizeInput()
@@ -113,7 +113,7 @@ object ProjectDialog {
         }
         val unit = TextView(ctx).apply {
             textSize = 12f
-            setTextColor(0xFF8A8A84.toInt())
+            setTextColor(Palette.MUTED)
             setPadding(px(8f), 0, 0, 0)
         }
         sizeRow.addView(wIn, LinearLayout.LayoutParams(0, px(44f), 1f))
@@ -258,7 +258,7 @@ object ProjectDialog {
             this.text = text
             textSize = 11.5f
             letterSpacing = 0.06f
-            setTextColor(0xFF8A8A84.toInt())
+            setTextColor(Palette.MUTED)
             val dd = ctx.resources.displayMetrics.density
             setPadding((2 * dd).toInt(),
                 ((if (first) 4 else 16) * dd).toInt(), 0, (7 * dd).toInt())
@@ -268,7 +268,7 @@ object ProjectDialog {
         TextView(ctx).apply {
             this.text = text
             textSize = 11f
-            setTextColor(0xFFA8A8A0.toInt())
+            setTextColor(Palette.MUTED_LIGHT)
             val p = (3 * ctx.resources.displayMetrics.density).toInt()
             setPadding(p, p, 0, 0)
         }
@@ -278,7 +278,7 @@ object ProjectDialog {
         return GradientDrawable().apply {
             cornerRadius = 8f * d
             setColor(0xFFFFFFFF.toInt())
-            setStroke((1 * d).toInt(), 0xFFDDDDD6.toInt())
+            setStroke((1 * d).toInt(), Palette.LINE)
         }
     }
 
@@ -295,8 +295,8 @@ object ProjectDialog {
         v.setTextColor(if (selected) Color.WHITE else 0xFF4A4A45.toInt())
         v.background = GradientDrawable().apply {
             cornerRadius = 8f * d
-            setColor(if (selected) 0xFF1A1A18.toInt() else 0x00000000)
-            if (!selected) setStroke((1 * d).toInt(), 0xFFDDDDD6.toInt())
+            setColor(if (selected) Palette.INK else 0x00000000)
+            if (!selected) setStroke((1 * d).toInt(), Palette.LINE)
         }
     }
 

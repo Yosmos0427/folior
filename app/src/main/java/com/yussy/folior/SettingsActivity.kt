@@ -13,6 +13,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.yussy.folior.store.Prefs
 import com.yussy.folior.ui.ColorPickerDialog
+import com.yussy.folior.ui.Palette
 
 /**
  * 全局设置（独立页面，非弹窗）：
@@ -66,7 +67,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun buildUi() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(0xFFFAFAF7.toInt())
+            setBackgroundColor(Palette.PAPER)
         }
 
         // ---- 顶栏 ----
@@ -78,14 +79,14 @@ class SettingsActivity : AppCompatActivity() {
         top.addView(TextView(this).apply {
             text = "‹"
             textSize = 24f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             setPadding(dp(6f), dp(4f), dp(14f), dp(4f))
             setOnClickListener { finish() }
         })
         top.addView(TextView(this).apply {
             text = "全局设置"
             textSize = 17f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         })
         root.addView(top)
@@ -132,7 +133,7 @@ class SettingsActivity : AppCompatActivity() {
 
         summary = TextView(this).apply {
             textSize = 12f
-            setTextColor(0xFF6B6B66.toInt())
+            setTextColor(Palette.INK_SOFT)
             setPadding(dp(2f), dp(22f), dp(2f), 0)
         }
         content.addView(summary)
@@ -159,26 +160,26 @@ class SettingsActivity : AppCompatActivity() {
         aboutHead.addView(TextView(this).apply {
             text = "册页"
             textSize = 16f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
         })
         aboutHead.addView(TextView(this).apply {
             text = "Folior"
             textSize = 11.5f
-            setTextColor(0xFFA8A8A0.toInt())
+            setTextColor(Palette.MUTED_LIGHT)
             setPadding(dp(8f), dp(2f), 0, 0)
         })
         aboutHead.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         aboutHead.addView(TextView(this).apply {
             text = "v${versionName()}"
             textSize = 11.5f
-            setTextColor(0xFFA8A8A0.toInt())
+            setTextColor(Palette.MUTED_LIGHT)
         })
         content.addView(aboutHead)
 
         content.addView(TextView(this).apply {
             text = "$ABOUT_P1\n\n$ABOUT_P2\n\n$ABOUT_P3"
             textSize = 12f
-            setTextColor(0xFF6B6B66.toInt())
+            setTextColor(Palette.INK_SOFT)
             setLineSpacing(dp(5f).toFloat(), 1.45f)
             setPadding(dp(2f), dp(10f), dp(2f), 0)
         })
@@ -186,7 +187,7 @@ class SettingsActivity : AppCompatActivity() {
         content.addView(TextView(this).apply {
             text = "内置字体均为 SIL OFL 授权，可自由商用"
             textSize = 11f
-            setTextColor(0xFFA8A8A0.toInt())
+            setTextColor(Palette.MUTED_LIGHT)
             setPadding(dp(2f), dp(14f), dp(2f), 0)
         })
 
@@ -206,7 +207,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun sectionLabel(text: String) = TextView(this).apply {
         this.text = text
         textSize = 12f
-        setTextColor(0xFF8A8A84.toInt())
+        setTextColor(Palette.MUTED)
         setPadding(dp(2f), dp(22f), 0, dp(6f))
     }
 
@@ -214,14 +215,14 @@ class SettingsActivity : AppCompatActivity() {
     private fun subLabel(text: String) = TextView(this).apply {
         this.text = text
         textSize = 12.5f
-        setTextColor(0xFF6B6B66.toInt())
+        setTextColor(Palette.INK_SOFT)
         setPadding(dp(2f), dp(16f), 0, dp(2f))
     }
 
     private fun hint(text: String) = TextView(this).apply {
         this.text = text
         textSize = 11.5f
-        setTextColor(0xFFA8A8A0.toInt())
+        setTextColor(Palette.MUTED_LIGHT)
         setLineSpacing(0f, 1.35f)
         setPadding(dp(2f), 0, dp(2f), dp(8f))
     }
@@ -241,12 +242,12 @@ class SettingsActivity : AppCompatActivity() {
         col.addView(TextView(this).apply {
             text = "背景色"
             textSize = 15f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
         })
         col.addView(TextView(this).apply {
             text = "预览图的底色，默认白色"
             textSize = 11.5f
-            setTextColor(0xFFA8A8A0.toInt())
+            setTextColor(Palette.MUTED_LIGHT)
             setPadding(0, dp(3f), 0, 0)
         })
         row.addView(col)
@@ -263,7 +264,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun bgChipDrawable(color: Int) = GradientDrawable().apply {
         cornerRadius = 8f * d
         setColor(color)
-        setStroke(dp(1f), 0xFFDDDDD6.toInt())
+        setStroke(dp(1f), Palette.LINE)
     }
 
     private fun pickPreviewBg(chip: TextView) {
@@ -288,7 +289,7 @@ class SettingsActivity : AppCompatActivity() {
             isClickable = true
             setOnClickListener {
                 Prefs.setPreviewKeepBlank(this@SettingsActivity, !Prefs.previewKeepBlank(this@SettingsActivity))
-                refreshSelectionOnly()
+                refresh(rewriteInputs = false)
             }
         }
         val col = LinearLayout(this).apply {
@@ -298,12 +299,12 @@ class SettingsActivity : AppCompatActivity() {
         col.addView(TextView(this).apply {
             text = "保留空白页"
             textSize = 15f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
         })
         col.addView(TextView(this).apply {
             text = "未放置任何内容的页面也出现在预览图中"
             textSize = 11.5f
-            setTextColor(0xFFA8A8A0.toInt())
+            setTextColor(Palette.MUTED_LIGHT)
             setPadding(0, dp(3f), 0, 0)
         })
         row.addView(col)
@@ -332,13 +333,13 @@ class SettingsActivity : AppCompatActivity() {
         val t = TextView(this).apply {
             text = title
             textSize = 15f
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
         }
         col.addView(t)
         val descView = TextView(this).apply {
             text = desc
             textSize = 11.5f
-            setTextColor(0xFFA8A8A0.toInt())
+            setTextColor(Palette.MUTED_LIGHT)
             setPadding(0, dp(3f), 0, 0)
         }
         col.addView(descView)
@@ -346,7 +347,7 @@ class SettingsActivity : AppCompatActivity() {
         val check = TextView(this).apply {
             text = "✓"
             textSize = 16f
-            setTextColor(0xFFB5442A.toInt())
+            setTextColor(Palette.ACCENT)
             visibility = View.INVISIBLE
             setPadding(dp(12f), 0, dp(4f), 0)
         }
@@ -359,7 +360,7 @@ class SettingsActivity : AppCompatActivity() {
             Prefs.setPdfDpiMode(this, mode)
             refresh()
         }
-        titleView.setTextColor(0xFF1A1A18.toInt())
+        titleView.setTextColor(Palette.INK)
         dpiChecks.add(mode to check)
         return row
     }
@@ -406,7 +407,7 @@ class SettingsActivity : AppCompatActivity() {
         }, { dpiInput = it }, {
             if (Prefs.pdfDpiMode(this) != Prefs.MODE_CUSTOM) {
                 Prefs.setPdfDpiMode(this, Prefs.MODE_CUSTOM)
-                refreshSelectionOnly()
+                refresh(rewriteInputs = false)
             }
         }))
         return box
@@ -429,7 +430,7 @@ class SettingsActivity : AppCompatActivity() {
             }, { limitInput = it }, {
             val cur = Prefs.pdfLimitMb(this)
             if (cur <= 0 || cur in LIMIT_PRESETS) Prefs.setPdfLimitMb(this, 50)
-            refreshSelectionOnly()
+            refresh(rewriteInputs = false)
         }))
         return box
     }
@@ -450,12 +451,12 @@ class SettingsActivity : AppCompatActivity() {
             textSize = 14f
             gravity = Gravity.CENTER
             setText(init.toString())
-            setTextColor(0xFF1A1A18.toInt())
+            setTextColor(Palette.INK)
             setPadding(dp(10f), dp(9f), dp(10f), dp(9f))
             background = GradientDrawable().apply {
                 cornerRadius = 8f * d
                 setColor(0xFFFFFFFF.toInt())
-                setStroke(dp(1f), 0xFFDDDDD6.toInt())
+                setStroke(dp(1f), Palette.LINE)
             }
             setOnFocusChangeListener { _, hasFocus ->
                 if (hasFocus) onEngage()
@@ -469,7 +470,7 @@ class SettingsActivity : AppCompatActivity() {
         row.addView(TextView(this).apply {
             text = unit
             textSize = 12.5f
-            setTextColor(0xFF6B6B66.toInt())
+            setTextColor(Palette.INK_SOFT)
             setPadding(dp(10f), 0, dp(4f), 0)
         })
         onCreate(et)
@@ -477,30 +478,6 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     // ---------------- 状态刷新 ----------------
-
-    /** 只更新选中标记与摘要（输入框获得焦点时用，避免打断输入） */
-    private fun refreshSelectionOnly() {
-        val dpiMode = Prefs.pdfDpiMode(this)
-        dpiChecks.forEach { (m, check) ->
-            check.visibility = if (m == dpiMode) View.VISIBLE else View.INVISIBLE
-        }
-        dpiInput.alpha = if (dpiMode == Prefs.MODE_CUSTOM) 1f else 0.6f
-
-        val limitMb = Prefs.pdfLimitMb(this)
-        limitChecks.forEach { (key, check) ->
-            val on = when (key) {
-                LIMIT_NONE -> limitMb <= 0
-                LIMIT_CUSTOM -> limitMb > 0 && limitMb !in LIMIT_PRESETS
-                else -> limitMb == key
-            }
-            check.visibility = if (on) View.VISIBLE else View.INVISIBLE
-        }
-        limitInput.alpha = if (limitMb > 0 && limitMb !in LIMIT_PRESETS) 1f else 0.6f
-        summary.text = "当前：${Prefs.pdfDpi(this)} dpi · ${Prefs.pdfLimitLabel(this)}"
-        updateBlankCheck()
-        updateSpineChecks()
-        updateViewerChecks()
-    }
 
     /** 放映图片源的勾选标记 */
     private fun updateViewerChecks() {
@@ -522,10 +499,14 @@ class SettingsActivity : AppCompatActivity() {
     private fun updateBlankCheck() {
         val on = Prefs.previewKeepBlank(this)
         blankCheck.text = if (on) "✓" else "–"
-        blankCheck.setTextColor(if (on) 0xFFB5442A.toInt() else 0xFFC0C0BA.toInt())
+        blankCheck.setTextColor(if (on) Palette.ACCENT else 0xFFC0C0BA.toInt())
     }
 
-    private fun refresh() {
+    /**
+     * 勾选标记、输入框透明度与摘要。
+     * [rewriteInputs] = false 时不回写输入框——用户正在输入，改写会把光标顶掉。
+     */
+    private fun refresh(rewriteInputs: Boolean = true) {
         val dpiMode = Prefs.pdfDpiMode(this)
         dpiChecks.forEach { (m, check) ->
             check.visibility = if (m == dpiMode) View.VISIBLE else View.INVISIBLE
@@ -543,7 +524,7 @@ class SettingsActivity : AppCompatActivity() {
         }
         val customOn = limitMb > 0 && limitMb !in LIMIT_PRESETS
         limitInput.alpha = if (customOn) 1f else 0.6f
-        if (customOn && !limitInput.hasFocus()) limitInput.setText(limitMb.toString())
+        if (rewriteInputs && customOn && !limitInput.hasFocus()) limitInput.setText(limitMb.toString())
 
         summary.text = "当前：${Prefs.pdfDpi(this)} dpi · ${Prefs.pdfLimitLabel(this)}"
         updateBlankCheck()
